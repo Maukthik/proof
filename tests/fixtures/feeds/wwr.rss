@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+<channel>
+<title>We Work Remotely: Remote jobs</title>
+<link>https://weworkremotely.com/remote-jobs.rss</link>
+<item>
+  <title>Acme Labs: Backend Developer (FastAPI, PostgreSQL)</title>
+  <region>Anywhere in the World</region>
+  <category>Back-End Programming</category>
+  <type>Contract</type>
+  <skills>Python, FastAPI, PostgreSQL</skills>
+  <description>&lt;p&gt;Build REST APIs in FastAPI on PostgreSQL, tested with pytest.&lt;/p&gt;</description>
+  <pubDate>Tue, 27 Oct 2026 10:00:00 +0000</pubDate>
+  <guid>https://weworkremotely.com/remote-jobs/acme-labs-backend-developer</guid>
+  <link>https://weworkremotely.com/remote-jobs/acme-labs-backend-developer</link>
+</item>
+<item>
+  <title>Studio Nine: Rails Developer</title>
+  <region>USA Only</region>
+  <description>&lt;p&gt;Ruby on Rails and Hotwire.&lt;/p&gt;</description>
+  <pubDate>Mon, 26 Oct 2026 10:00:00 +0000</pubDate>
+  <guid>https://weworkremotely.com/remote-jobs/studio-nine-rails</guid>
+  <link>https://weworkremotely.com/remote-jobs/studio-nine-rails</link>
+</item>
+</channel>
+</rss>

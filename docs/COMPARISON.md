@@ -15,7 +15,7 @@ code read directly; the others come from listings and articles, so check them yo
 | **DeepWiki / deepwiki-open** (read) | AI-written wiki plus chat for any repo. | Case studies (but those are docs for developers) |
 | **readme-ai** (read) | Generates a README with styled headers and badges. | `proof suggest` (what the README is missing) |
 | Foliox, GitFolio, devb.io, GitHired, PortGen | Portfolio sites or profile summaries from your GitHub account. | `proof site`, `proof profile` |
-| GigRadar, Upwex, PouncerAI | Upwork job alerts, auto-bidding, AI proposals, reply analytics. | `proof pitch`, `proof log` |
+| GigRadar, Upwex, PouncerAI | Upwork job alerts, auto-bidding, AI proposals, reply analytics. | `proof apply`, `proof pitch`, `proof log`, `proof followup` |
 
 ## Where proof is different
 
@@ -42,7 +42,8 @@ code read directly; the others come from listings and articles, so check them yo
   with components and evidence, then the graph) and aims for 12-24 components on big
   products; proof's diagram is part of one case-study answer, 5-10 boxes.
 - **Reach:** REA analyses closed-source software of 30+ kinds; DeepWiki answers questions
-  about any public repo; the proposal tools watch job boards for you.
+  about any public repo; the proposal tools watch Upwork itself (proof reads public boards
+  only: Remotive, Remote OK, We Work Remotely, Hacker News, any RSS feed).
 - **Polish:** the hosted tools have web apps, browser extensions and hourly refreshes.
 
 ## What proof took from them

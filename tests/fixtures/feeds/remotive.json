@@ -1,0 +1,63 @@
+{
+ "0-legal-notice": "Remotive API Legal Notice",
+ "job-count": 4,
+ "jobs": [
+  {
+   "id": 2001,
+   "url": "https://remotive.com/remote-jobs/software-dev/senior-full-stack-engineer-2001",
+   "title": "Senior Full-Stack Engineer (Next.js / Stripe)",
+   "company_name": "Paybright",
+   "company_logo": "",
+   "category": "Software Development",
+   "tags": [
+    "nextjs",
+    "typescript",
+    "stripe",
+    "postgresql"
+   ],
+   "job_type": "contract",
+   "publication_date": "2026-10-26T09:12:00",
+   "candidate_required_location": "Worldwide",
+   "salary": "$60-80/hour",
+   "description": "<p>We are building a billing portal for agencies.</p><ul><li>Next.js App Router and TypeScript</li><li>Stripe subscriptions and webhooks</li><li>PostgreSQL with Prisma</li><li>Role-based access for team and clients</li></ul><p>Nice to have: Kubernetes.</p>"
+  },
+  {
+   "id": 2002,
+   "url": "https://remotive.com/remote-jobs/software-dev/data-engineer-2002",
+   "title": "Data Engineer",
+   "company_name": "Northwind",
+   "category": "Software Development",
+   "tags": [
+    "spark",
+    "airflow"
+   ],
+   "job_type": "full_time",
+   "publication_date": "2026-10-25T10:00:00",
+   "candidate_required_location": "USA only",
+   "description": "<p>Own our pipelines in Spark, Airflow and Snowflake. Python and SQL daily.</p>"
+  },
+  {
+   "id": 2003,
+   "url": "https://remotive.com/remote-jobs/software-dev/python-llm-2003",
+   "title": "Python Developer - LLM evaluation tooling",
+   "company_name": "EvalWorks",
+   "tags": [],
+   "job_type": "freelance",
+   "publication_date": "2026-10-27T15:30:00",
+   "candidate_required_location": "Europe, Asia",
+   "description": "<p>Help us build an evaluation harness for LLM agents: run agent tasks in a sandbox, score them, and report regressions in GitHub Actions. Python, FastAPI.</p>"
+  },
+  {
+   "id": 1500,
+   "url": "https://remotive.com/remote-jobs/software-dev/old-1500",
+   "title": "Next.js + Stripe developer",
+   "company_name": "Oldco",
+   "tags": [
+    "nextjs"
+   ],
+   "publication_date": "2026-08-01T09:00:00",
+   "candidate_required_location": "Worldwide",
+   "description": "<p>Next.js, TypeScript, Stripe webhooks, Prisma.</p>"
+  }
+ ]
+}

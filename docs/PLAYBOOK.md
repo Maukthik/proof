@@ -59,6 +59,25 @@ supplying the facts and the checks:
   links and diagram check and files it with your others
 - `agents\proof-case-study\SKILL.md` teaches the agent the routine
 
+### `proof apply`: jobs come to you
+Reads public job boards - Remotive, Remote OK, We Work Remotely, and the monthly Hacker
+News "Seeking freelancer" thread (add `hn` for "Who is hiring", or any RSS feed URL) - and
+lists only the **new** jobs that fit your projects: best first, which project fits and
+why, and what the job asks for that you don't show yet. It drafts pitches for the top 3.
+It never sends anything: you read, fix and send each one yourself. Upwork has no feed
+any more and LinkedIn needs a login, so copy those posts into `proof pitch -`.
+
+### `proof followup`: one well-timed nudge
+`proof log` lists pitches sent 4+ days ago with no reply. `proof followup <pitch>` drafts
+a short follow-up that adds one *new* detail from your project (not "just checking in").
+After a follow-up, 10+ days of silence means let it go.
+
+### `proof prep`: ready for the call
+When a client wants to talk: `proof prep <pitch>` writes a one-page brief - the questions
+they'll likely ask with answers from your real projects (naming files), the technologies
+they want that you don't show and an honest way to answer, questions to ask them, and a
+30-second intro. Notes you logged ("asked about Kubernetes") count too.
+
 ### Small conveniences
 - `"@file.txt"` anywhere repos go: a list of repos, one per line, `#` for comments
   (keep the quotes in PowerShell).
@@ -160,27 +179,47 @@ py -m proof profile
 Paste `proof_output\profile.md` into your Upwork overview, LinkedIn About and resume.
 `--only doppel client-desk` to choose the projects.
 
-### Step 6. Pitch for jobs
-Save the job post to a file (Upwork needs a login, so copy the text), then:
+### Step 6. Find jobs and pitch
+Each morning (or every few days):
+```powershell
+py -m proof apply                     # new jobs that fit + pitch drafts for the top 3
+py -m proof apply --no-ai             # just the list, instantly
+py -m proof apply hn --days 7         # add HN "Who is hiring", last week only
+```
+It prints the fits (also saved to `proof_output\jobs\<date>.md`) and the drafts it wrote
+in `proof_output\pitches\`. Next time it shows only jobs you haven't seen.
+
+For a job you found yourself (Upwork, LinkedIn, a client's email), save the text, then:
 ```powershell
 py -m proof pitch job.txt            # or a job URL, or - to paste
 ```
-It shows which projects match and why, writes the reply from the best ones, and lints it.
-Fix anything flagged, add your own touch, send it, then:
+Either way: open the draft, fix anything flagged, make it sound like you, send it, then:
 ```powershell
 py -m proof log job sent
 ```
 Check a pitch you wrote yourself: `py -m proof lint my_pitch.txt --job job.txt`.
 
-### Step 7. Learn what wins
+### Step 7. Follow up, prepare, learn what wins
 ```powershell
-py -m proof log job replied --note "wants a call"
-py -m proof log job won
-py -m proof log                       # reply rates per project and skill
+py -m proof log                       # pitches, reply rates, and what to do next
 ```
-After ~10 sent pitches, the log shows which projects and skills get answers. Re-run
+- **"Due a follow-up"** (sent 4+ days ago, no reply):
+  ```powershell
+  py -m proof followup job            # one short nudge with something new
+  py -m proof log job followed-up     # after you send it
+  ```
+- **They replied:**
+  ```powershell
+  py -m proof log job replied --note "wants a call Friday, asked about Docker"
+  py -m proof prep job                # read proof_output\prep\job.md before the call
+  ```
+- **Won it:** `py -m proof log job won`. **Silence 10+ days after the follow-up:**
+  `py -m proof log job ignored`.
+
+After ~10 sent pitches, `proof log` shows which projects and skills get answers. Re-run
 `py -m proof suggest <repo>`: its "what clients asked for" section lists the technologies
-those jobs wanted that the project doesn't show yet - that's your next feature.
+those jobs wanted that the project doesn't show yet - that's your next feature. The
+"missing:" lines from `proof apply` point the same way.
 
 ### Step 8. Improve the AI (when you want better drafts)
 ```powershell
@@ -206,6 +245,10 @@ Use the model with the fewest problems after repair. When you have 50+ trusted e
 | `Engineering highlights name no real file` | vague highlights | rerun, or name the files that do the hard parts |
 | `filler phrases` | "seamless", "daunting" ... | say something specific |
 | `missing sections` / `no Mermaid diagram` | the format broke | rerun with `--force` |
+| `gives them no reason to reply` (followup) | "just checking in" | lead with a new detail from the project |
+| `Repeats your first message` (followup) | same sentences again | say something the pitch didn't |
+| `Files your case studies don't mention` (prep) | the brief names a file you may not have | check it before the call |
+| `WARN remotive: couldn't reach ...` (apply) | a board is down or blocked | the others still run; try later |
 
 ---
 
@@ -230,3 +273,4 @@ Use the model with the fewest problems after repair. When you have 50+ trusted e
 | `LLM API busy, retrying` | free tiers limit requests per minute; proof waits and retries |
 | `Not a folder` | check the path, or use the GitHub URL |
 | `skipped: no code and no real README` | push some code first (or `--force`) |
+| `apply` finds nothing new | boards are re-read every 6h: `--refresh`; `--all` to see old fits; `--min-tech 1` to loosen |

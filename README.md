@@ -13,6 +13,9 @@ from scratch. `proof` reads your GitHub repos and gives you:
 6. **Suggestions**: what to build next in a project so it's stronger proof, as tasks you can
    hand to a coding assistant.
 7. **An eval and a training kit**: score models on the task, and fine-tune a local one.
+8. **Job finding and follow-through**: new jobs from public job boards that fit your
+   projects (with pitch drafts), follow-up reminders and drafts, and a brief for the
+   client call. It never sends anything for you.
 
 ```
 your repos ──case──▶ case studies ──pitch──▶ pitch for a job post (+ lint, + log)
@@ -97,7 +100,18 @@ proof eval ./doppel ./client-desk --provider ollama --models llama3.1:8b-instruc
 # 9. Training data for fine-tuning a local model (see training/README.md)
 proof dataset --exclude doppel client-desk
 
-# 10. Let a coding agent write it, with proof as the checker (see below)
+# 10. New jobs that fit your projects, from public job boards, + pitch drafts for the top 3
+proof apply                            # Remotive, Remote OK, We Work Remotely, HN freelance
+proof apply hn https://example.com/jobs.rss --days 7 --no-ai
+
+# 11. No reply after 4 days? `proof log` says so; draft one follow-up
+proof followup need-a-fastapi-dev
+proof log need-a-fastapi-dev followed-up
+
+# 12. They want a call: likely questions + answers from your projects, gaps, an intro
+proof prep need-a-fastapi-dev
+
+# 13. Let a coding agent write it, with proof as the checker (see below)
 proof scan ./doppel --prompt          # what the model would see, secrets removed
 proof check draft.md --repo ./doppel --save
 ```
@@ -112,8 +126,12 @@ proof_output/
   <repo>/case_study.new.md  a regenerated version, when you had edited the one above
   <repo>/facts.md           yours: real numbers, users, links. Used for every claim
   <repo>/meta.json          commit, detected stack, model used
-  pitches/<job>.md          one per job post
+  pitches/<job>.md          one per job post (+ <job>.job.txt, the post itself,
+                            and <job>.followup.md)
   pitches/log.json          what you sent and what happened
+  jobs/<date>.md            jobs `proof apply` found that fit, with why and what's missing
+  jobs/seen.json            jobs already shown (so each run shows only new ones)
+  prep/<job>.md             call briefs
   profile.md                Upwork / LinkedIn text + resume bullets
   site/index.html           upload to GitHub Pages / Netlify
 ```
@@ -165,7 +183,7 @@ so a quiet day costs no LLM calls.
 
 | File | Job |
 |---|---|
-| `proof/cli.py` | Command line: `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `suggest`, `eval`, `dataset` |
+| `proof/cli.py` | Command line: `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `apply`, `followup`, `prep`, `suggest`, `eval`, `dataset` |
 | `proof/casestudy.py` | One case study: draft, checks, one repair round, source links |
 | `proof/claims.py` | Links each result to the README line it comes from |
 | `proof/diagram.py` | Checks diagram arrows against the imports; links boxes to files |
@@ -180,7 +198,9 @@ so a quiet day costs no LLM calls.
 | `proof/match.py` | Ranks your projects against a job post (no LLM, explainable) |
 | `proof/jobpost.py` | Reads a job post from a file, a URL or a paste |
 | `proof/lint.py` | Checks: placeholders, invented numbers, length, openers, buzzwords, format |
-| `proof/tracker.py` | The pitch log |
+| `proof/tracker.py` | The pitch log, follow-up reminders |
+| `proof/feeds.py` | Reads job boards: Remotive, Remote OK, We Work Remotely, Hacker News, any RSS/Atom feed |
+| `proof/apply.py` | `proof apply`: which new jobs fit your projects, and why |
 | `proof/portfolio.py` | Builds the portfolio page |
 | `proof/suggest.py` | What to build next: checklist, client asks, ideas as coding tasks |
 | `proof/evaluate.py` | `proof eval`: scores models with the checks, compares with the last run |
@@ -209,4 +229,5 @@ python -m pytest -q          # no LLM or internet needed
 - [x] Claim links, `proof eval`, `proof suggest`, fine-tuning kit
 - [ ] Tune prompts on real model output (see CLAUDE.md)
 - [ ] Run the fine-tuning loop for real (training/README.md)
-- [ ] `proof apply`: watch a job feed and draft pitches for good matches
+- [x] `proof apply` (job boards -> fits -> pitch drafts), follow-ups, call prep
+- [ ] Learn from the pitch log: feed what gets replies back into matching and pitches

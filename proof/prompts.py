@@ -176,3 +176,85 @@ Rules:
 - Name only files that appear in the scan, or new files marked (new).
 - Output only the ideas.
 """
+
+
+FOLLOW_UP = """A developer sent this message about an opportunity a few days ago and got no
+reply yet.
+
+=== OPPORTUNITY ===
+{job}
+=== END OF OPPORTUNITY ===
+
+=== THEIR FIRST MESSAGE ===
+{pitch}
+=== END OF FIRST MESSAGE ===
+
+Case studies of the projects they mentioned:
+
+{case_studies}
+
+Task: write a short follow-up message they can send now.
+
+Rules:
+- Give the client one NEW reason to reply: a specific detail from the case studies that the
+  first message didn't use (a feature, a file, a result), tied to something the opportunity
+  asks for. Or a small, concrete first step they could take for the client.
+- Don't repeat the first message, don't apologise, and don't write "just following up",
+  "checking in", "circling back" or "any update".
+- Use only numbers that appear in the case studies or facts, and keep what each one
+  measured. Never copy [add: ...] placeholders.
+- End with one easy question.
+- Under 80 words. Plain and friendly.
+- Output only the message text.
+"""
+
+
+PREP = """A client answered a developer and wants to talk. Below are the opportunity, the
+developer's message, their notes, case studies of their projects, and the technologies the
+opportunity names that none of their projects show.
+
+=== OPPORTUNITY ===
+{job}
+=== END OF OPPORTUNITY ===
+
+=== THEIR MESSAGE ===
+{pitch}
+=== END OF MESSAGE ===
+
+=== NOTES ===
+{notes}
+=== END OF NOTES ===
+
+{case_studies}
+
+=== NOT SHOWN IN ANY PROJECT ===
+{gaps}
+=== END ===
+
+Task: write a one-page brief the developer reads before the call. Use exactly this
+Markdown (the shapes show the form only):
+
+## What they need
+(2-3 bullets: the client's goal and main requirements, in the client's own words.)
+## Questions they'll likely ask
+(5-7 questions this client is likely to ask. Each one as `### <question>`, then a 2-4
+sentence answer in the developer's voice (first person), taken from the case studies:
+name the project, and the feature or file that shows it.)
+## Gaps to be ready for
+(One bullet per technology in "not shown in any project": an honest answer - what they
+have used that is close, from the case studies, and how they would get up to speed.
+Write "None." if that list is empty.)
+## Questions to ask them
+(4-5 questions that pin down the work: who uses it, what data, deadline, what "done"
+looks like, how they'll judge it.)
+## 30-second intro
+(What the developer says first: who they are, the most relevant project, and one result.)
+
+Rules:
+- Every claim comes from the case studies or facts. Never claim experience they don't
+  show; for anything missing, say how they would handle it.
+- Use only numbers that appear in the case studies or facts, and keep what each one
+  measured. Never copy [add: ...] placeholders.
+- Plain words, no buzzwords.
+- Output only the Markdown above.
+"""

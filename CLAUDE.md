@@ -10,7 +10,8 @@ application/proposal gets rewritten from scratch.
 
 ## Layout
 Everything is in the `proof/` package (installed as the `proof` command via `pyproject.toml`).
-- `proof/cli.py`: CLI with `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `suggest`, `eval`, `dataset`
+- `proof/cli.py`: CLI with `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `apply`,
+  `followup`, `prep`, `suggest`, `eval`, `dataset`
 - `proof/casestudy.py`: one case study: draft -> lint checks -> one repair round (prompts.REVISE) -> source links
 - `proof/claims.py`: links each Results line to the README line stating the same numbers the same way
 - `proof/diagram.py`: arrows between real files must be backed by an import (else dashed); boxes get click links
@@ -25,7 +26,13 @@ Everything is in the `proof/` package (installed as the `proof` command via `pyp
 - `proof/match.py`: explainable job ↔ project ranking (no LLM)
 - `proof/jobpost.py`: job post from a file, URL (schema.org JobPosting or page text) or stdin
 - `proof/lint.py`: rule-based checks: pitch lint, case study format, numbers not found in any source
-- `proof/tracker.py`: pitch log (`proof_output/pitches/log.json`) and reply rates
+- `proof/tracker.py`: pitch log (`proof_output/pitches/log.json`), reply rates, follow-up reminders
+  (sent 4+ days, no reply -> `proof followup`; 10+ days after it -> mark ignored)
+- `proof/feeds.py`: job boards for `proof apply`: Remotive + Remote OK APIs, We Work Remotely RSS,
+  HN "Seeking freelancer"/"Who is hiring" threads (Algolia API), any RSS/Atom URL. 6h cache.
+  Formats taken from their docs (unreachable from the dev sandbox); fixtures in tests/fixtures/feeds/
+- `proof/apply.py`: `proof apply`: fit = a project shares 2+ real techs (not COMMON_TOOLS) and
+  your projects show 1/3+ of what the job names; seen.json; daily digest. Never sends anything
 - `proof/portfolio.py`: static portfolio page (Python-Markdown + Mermaid via CDN)
 - `proof/suggest.py`: what to build next: client-readiness checklist, techs clients asked for (pitch
   log `job_tech`), model ideas turned into coding-assistant tasks
@@ -97,6 +104,10 @@ Second run: the 8B model COPIED the prompt's realistic examples into both case s
   version has fewer (prompts.REVISE). Small models fix listed problems much better than they
   avoid them.
 
+Pitch -> call loop (2026-10-28): `proof apply` (boards -> fits -> drafts), `proof followup`,
+`proof prep`; every pitch now saves its job post as `pitches/<name>.job.txt`. Their output goes
+through lint_followup / lint_prep (numbers, flips, unknown files, "just checking in", repeats).
+
 ## Next gaps to close (in priority order)
 0. Use `proof eval` for every prompt change: run it before and after, keep only improvements.
 1. Keep tuning `prompts.py` on Mauk's real repos with a real model (`proof case ... --force`). Save each
@@ -105,6 +116,8 @@ Second run: the 8B model COPIED the prompt's realistic examples into both case s
 2. Try the templates for real: a `portfolio` repo with repos.txt, Pages on, one ping from doppel.
 3. Run the fine-tuning loop for real (training/README.md): teacher data on Groq/Anthropic,
    Kaggle training, then `proof eval` old vs fine-tuned. Fix train_lora.py if Unsloth/TRL renamed things.
-4. `proof apply`: watch a job feed (RSS / saved search) and draft pitches for good matches.
+4. Run `proof apply` against the LIVE boards on Mauk's laptop (the sandbox couldn't reach them):
+   check each reader still parses, and that fits look right on real posts. Then prompts for
+   followup/prep (prompts.FOLLOW_UP, prompts.PREP) on a real model.
 5. Learn from the pitch log: feed the best-replying projects/angles back into the pitch prompt.
 6. Publish to PyPI (name `proof-cli` in pyproject.toml) once the real-model output is good.

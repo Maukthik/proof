@@ -9,6 +9,9 @@ Commands:
   profile                   Upwork/LinkedIn "about" text + resume bullets
   site                      build a portfolio page from all case studies
   log     [PITCH STATUS]    track sent pitches and replies, see what works
+  apply   [BOARD ...]       new jobs from job boards that fit your projects, + pitch drafts
+  followup PITCH            a short follow-up for a pitch that got no reply
+  prep    PITCH|JOB         a brief for the client call: likely questions, gaps, intro
 
 Examples:
   proof case https://github.com/you/doppel ./rag-chatbot --provider ollama
@@ -27,17 +30,20 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
+from .apply import (board_name, console_lines, digest, find_fits, headline, is_recent,
+                    job_text, load_seen, save_digest, save_seen)
 from .facts import fingerprint, read_facts, start_facts_file
-from .jobpost import read_job
+from .feeds import BOARDS, CACHE_HOURS, DEFAULT_BOARDS, FeedError, read_board
+from .jobpost import read_job, slug
 from . import casestudy, dataset, evaluate, suggest
-from .lint import lint_pitch, print_problems, unsupported_numbers
+from .lint import lint_followup, lint_pitch, lint_prep, print_problems, unsupported_numbers
 from .llm import DEFAULT_MODELS, ask_llm, scan_budget, strip_wrapper
-from .match import rank_projects, tech_in
+from .match import COMMON_TOOLS, rank_projects, tech_in
 from .portfolio import build_site, load_case_studies
-from .prompts import PITCH, PROFILE, SUGGEST
+from .prompts import FOLLOW_UP, PITCH, PREP, PROFILE, SUGGEST
 from .scan import (detect_stack, get_repo, has_enough_to_write_about, head_commit, is_url,
                    list_files, pushed_commit, remote_head, repo_name, scan_repo, web_url)
-from .tracker import STATUSES, load_log, record_pitch, report, update_status
+from .tracker import STATUSES, find_pitch, load_log, record_pitch, report, update_status
 
 
 # ---------------------------------------------------------------------------
@@ -294,44 +300,234 @@ def require_case_studies(out_dir):
     return projects
 
 
-def cmd_pitch(args):
-    job, job_name = read_job(args.job)
-    projects = require_case_studies(args.out)
+def searchable(projects):
+    """Projects as the matcher reads them: case study, your facts and the detected stack."""
+    return [{**p, "text": "\n".join([p["text"], p["facts"], " ".join(p["stack"])]),
+             "case_study": p["text"]} for p in projects]
 
-    # Match against the case study, your facts and the detected stack
-    searchable = [{**p, "text": "\n".join([p["text"], p["facts"], " ".join(p["stack"])]),
-                   "case_study": p["text"]} for p in projects]
-    ranked = rank_projects(job, searchable)
 
-    print("Project match for this job:")
+def choose_projects(job, projects, top, say=print):
+    """The projects to use as evidence for this job, best first.
+    Evidence = projects that share real tech with the job and score at least half as
+    well as the best one (Docker alone doesn't make a project relevant).
+    If none share any tech, use the best one anyway."""
+    ranked = rank_projects(job, searchable(projects))
+    say("Project match for this job:")
     for p in ranked:
-        print(f"  {p['score']:5.1f}  {p['name']:<28} {', '.join(p['matched']) or '-'}")
-    # Evidence = projects that share real tech with the job and score at least half as
-    # well as the best one (Docker alone doesn't make a project relevant).
-    # If none share any tech, use the best one anyway.
+        say(f"  {p['score']:5.1f}  {p['name']:<28} {', '.join(p['matched']) or '-'}")
     best = ranked[0]["score"]
-    chosen = [p for p in ranked if p["matched"] and p["score"] >= best / 2][:args.top]
+    chosen = [p for p in ranked if p["matched"] and p["score"] >= best / 2][:top]
     if not chosen:
-        print("  (no shared tech - this job may not suit your current projects)")
+        say("  (no shared tech - this job may not suit your current projects)")
         chosen = ranked[:1]
-    chosen = [{**p, "text": p["case_study"]} for p in chosen]
+    return [{**p, "text": p["case_study"]} for p in chosen]
 
-    print(f"Writing pitch using: {', '.join(p['name'] for p in chosen)} ...")
+
+def pitch_folder(out_dir):
+    return Path(out_dir) / "pitches"
+
+
+def write_pitch(job, job_name, source, projects, args, say=print):
+    """Pick the projects, write the pitch, save it (with the job post next to it, for
+    `proof followup` and `proof prep`) and log it as a draft.
+    Returns (pitch file, pitch text, lint problems)."""
+    chosen = choose_projects(job, projects, args.top, say)
+    say(f"Writing pitch using: {', '.join(p['name'] for p in chosen)} ...")
     case_studies = "\n\n".join(project_block(p) for p in chosen)
     pitch = strip_wrapper(ask_llm(PITCH.format(job=job, case_studies=case_studies),
                                   args.provider, args.model))
 
-    pitch_file = Path(args.out) / "pitches" / f"{job_name}.md"
-    pitch_file.parent.mkdir(parents=True, exist_ok=True)
+    folder = pitch_folder(args.out)
+    folder.mkdir(parents=True, exist_ok=True)
+    pitch_file = folder / f"{job_name}.md"
     pitch_file.write_text(pitch + "\n", encoding="utf-8")
+    (folder / f"{job_name}.job.txt").write_text(job + "\n", encoding="utf-8")
     matched = sorted({term for p in chosen for term in p["matched"]})
-    record_pitch(args.out, job_name, args.job if args.job != "-" else "pasted",
-                 [p["name"] for p in chosen], matched, job_tech=tech_in(job))
+    record_pitch(args.out, job_name, source, [p["name"] for p in chosen], matched,
+                 job_tech=tech_in(job))
+    problems = lint_pitch(pitch, job, sources=[project_block(p) for p in chosen])
+    return pitch_file, pitch, problems
 
+
+def cmd_pitch(args):
+    job, job_name = read_job(args.job)
+    projects = require_case_studies(args.out)
+    pitch_file, pitch, problems = write_pitch(job, job_name,
+                                              args.job if args.job != "-" else "pasted",
+                                              projects, args)
     print(f"Saved {pitch_file}\n")
     print(pitch, "\n")
-    print_problems(lint_pitch(pitch, job, sources=[project_block(p) for p in chosen]))
+    print_problems(problems)
     print(f"\nWhen you send it:  proof log {job_name} sent")
+
+
+# ---------------------------------------------------------------------------
+# apply / followup / prep: from job boards to the client call
+# ---------------------------------------------------------------------------
+
+def cmd_apply(args):
+    """Read job boards, list the new jobs that fit your projects, draft pitches for the
+    best few. Sends nothing: you read, fix and send each pitch yourself."""
+    projects = require_case_studies(args.out)
+    cache_dir = Path(args.out) / "jobs" / "cache"
+    jobs, boards_read, saved_copies = [], [], []
+    for board in args.boards or DEFAULT_BOARDS:
+        try:
+            found, cached = read_board(board, cache_dir, refresh=args.refresh)
+        except FeedError as error:
+            print(f"  WARN  {board}: {error}")
+            continue
+        print(f"  {board_name(board)}: {len(found)} jobs" + (" (saved copy, under "
+              f"{CACHE_HOURS}h old)" if cached else ""))
+        jobs += found
+        boards_read.append(board_name(board))
+        saved_copies.append(cached)
+    if not boards_read:
+        sys.exit("No job board could be read. Check your internet connection, or try "
+                 "again later (--refresh skips the saved copies).")
+
+    seen = load_seen(args.out)
+    skip = {} if args.all else seen
+    fits = find_fits(jobs, searchable(projects), skip, args.days, args.min_tech)
+    new = sum(1 for job in jobs if job["id"] not in skip and is_recent(job, args.days))
+    print(f"\n{new} new job(s) from the last {args.days} days, {len(fits)} fit your projects"
+          + (":" if fits else "."))
+    for line in console_lines(fits):
+        print(line)
+    if not new and any(saved_copies):
+        print(f"(Boards are read again {CACHE_HOURS}h after the last time; --refresh to read "
+              f"them now, --all to see jobs you've been shown before.)")
+
+    drafts = {}
+    # Jobs that already have a pitch (from an earlier run, or `proof pitch <url>`) are skipped
+    drafted = {entry.get("source") for entry in load_log(args.out).values()}
+    to_draft = [] if args.no_ai else [(job, fit) for job, fit in fits
+                                      if job["url"] not in drafted][:args.draft]
+    if to_draft:
+        print(f"\nDrafting pitches for the top {len(to_draft)} ...")
+    for job, _ in to_draft:
+        name = unused_name(pitch_folder(args.out), slug(headline(job), max_words=8) or "job")
+        pitch_file, _, problems = write_pitch(job_text(job), name, job["url"], projects, args,
+                                              say=lambda message: None)
+        drafts[job["id"]] = pitch_file.as_posix()
+        warnings = sum(level != "INFO" for level, _ in problems)
+        print(f"  {pitch_file}" + (f"  ({warnings} lint warning(s): proof lint {pitch_file} "
+                                   f"--job {pitch_file.with_suffix('.job.txt')})"
+                                   if warnings else ""))
+
+    save_seen(args.out, seen, jobs)
+    if fits:
+        path = save_digest(args.out, digest(fits, drafts, boards_read))
+        print(f"\nList saved to {path}")
+    if drafts:
+        print("Read each draft, make it yours, send it yourself, then:  "
+              "proof log <pitch name> sent")
+
+
+def unused_name(folder, name):
+    """'python-dev' or, if a pitch already has that name, 'python-dev-2' ... - never
+    overwrite a pitch you may have sent."""
+    candidate, number = name, 2
+    while (folder / f"{candidate}.md").exists():
+        candidate, number = f"{name}-{number}", number + 1
+    return candidate
+
+
+def find_logged_pitch(out_dir, name):
+    """(name, log entry, pitch text, job text) for a pitch in the log."""
+    log = load_log(out_dir)
+    name = find_pitch(log, name)
+    folder = pitch_folder(out_dir)
+    pitch_file = folder / f"{name}.md"
+    pitch = pitch_file.read_text(encoding="utf-8") if pitch_file.exists() else ""
+    job_file = folder / f"{name}.job.txt"
+    if job_file.exists():
+        job = job_file.read_text(encoding="utf-8")
+    elif log[name].get("source", "pasted") != "pasted":
+        job = read_job(log[name]["source"])[0]        # pitches from before job.txt was kept
+    else:
+        job = ""
+    return name, log[name], pitch, job
+
+
+def logged_projects(out_dir, entry):
+    projects = require_case_studies(out_dir)
+    used = [p for p in projects if p["name"] in entry.get("projects", [])]
+    return used or projects[:1]
+
+
+def cmd_followup(args):
+    name, entry, first, job = find_logged_pitch(args.out, args.pitch)
+    if entry["status"] in ("replied", "won"):
+        sys.exit(f"{name} already got a reply - no follow-up needed. Getting ready for the "
+                 f"call?  proof prep {name}")
+    if not first:
+        sys.exit(f"No pitch file for {name} in {pitch_folder(args.out)}.")
+    if entry["status"] == "draft":
+        print(f"Note: {name} isn't marked as sent. If you sent it:  proof log {name} sent")
+    if entry["status"] == "followed-up":
+        print(f"Note: you already followed up on {name}. A second follow-up rarely helps.")
+
+    projects = logged_projects(args.out, entry)
+    case_studies = "\n\n".join(project_block(p) for p in projects)
+    print(f"Writing a follow-up using: {', '.join(p['name'] for p in projects)} ...")
+    text = strip_wrapper(ask_llm(FOLLOW_UP.format(job=job or "(not saved)", pitch=first,
+                                                  case_studies=case_studies),
+                                 args.provider, args.model))
+    target = pitch_folder(args.out) / f"{name}.followup.md"
+    target.write_text(text + "\n", encoding="utf-8")
+    print(f"Saved {target}\n")
+    print(text, "\n")
+    print_problems(lint_followup(text, first, [project_block(p) for p in projects]))
+    print(f"\nWhen you send it:  proof log {name} followed-up")
+
+
+def cmd_prep(args):
+    """A one-page brief for a client call: likely questions with answers from your
+    projects, the gaps to be ready for, questions to ask them, a 30-second intro."""
+    is_job = args.target == "-" or args.target.startswith(("http://", "https://")) \
+        or Path(args.target).is_file()
+    if is_job:
+        job, name = read_job(args.target)
+        pitch, notes = "", ""
+        projects = choose_projects(job, require_case_studies(args.out), args.top)
+    else:
+        name, entry, pitch, job = find_logged_pitch(args.out, args.target)
+        notes = "\n".join(entry.get("notes", []))
+        projects = logged_projects(args.out, entry)
+    if not job:
+        sys.exit(f"The job post for {name} wasn't saved. Give it directly:  "
+                 f"proof prep <job file or URL>")
+
+    # Gaps: what the job (or the client's reply, in your notes) names that NONE of your
+    # projects show - not just the projects chosen for this job
+    shown = set()
+    for project in searchable(require_case_studies(args.out)):
+        shown |= tech_in(project["text"])
+    gaps = sorted(tech_in(job + "\n" + notes) - shown - COMMON_TOOLS)
+    header = (f"# Call prep: {name}\n\n"
+              f"Projects to talk about: {', '.join(p['name'] for p in projects)}\n"
+              f"Not shown in any project: {', '.join(gaps) or 'nothing - you cover it all'}\n")
+
+    brief, problems = "", []
+    if not args.no_ai:
+        case_studies = "\n\n".join(project_block(p) for p in projects)
+        print(f"Writing the call brief with {args.provider}/{args.model} ...")
+        brief = strip_wrapper(ask_llm(PREP.format(job=job, pitch=pitch or "(none)",
+                                                  notes=notes or "(none)",
+                                                  case_studies=case_studies,
+                                                  gaps=", ".join(gaps) or "(none)"),
+                                      args.provider, args.model))
+        problems = lint_prep(brief, [project_block(p) for p in projects] + [job, pitch, notes])
+
+    target = Path(args.out) / "prep" / f"{name}.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(header + ("\n" + brief + "\n" if brief else ""), encoding="utf-8")
+    print(f"Saved {target}\n")
+    print(header)
+    if brief:
+        print(brief, "\n")
+        print_problems(problems, ok_message="Check: every claim traces to your case studies.")
 
 
 def cmd_lint(args):
@@ -472,6 +668,32 @@ def main(argv=None):
     p.add_argument("--top", type=int, default=2, help="How many projects to use")
     p.set_defaults(func=cmd_pitch)
 
+    p = sub.add_parser("apply", parents=[common],
+                       help="Find new jobs that fit your projects, draft pitches for the best")
+    p.add_argument("boards", nargs="*", metavar="BOARD",
+                   help=f"Job boards: {', '.join(BOARDS)}, or an RSS/Atom feed URL "
+                        f"(default: {' '.join(DEFAULT_BOARDS)})")
+    p.add_argument("--days", type=int, default=14, help="Only jobs posted in the last N days")
+    p.add_argument("--draft", type=int, default=3, help="Draft pitches for the top N fits")
+    p.add_argument("--min-tech", type=int, default=2,
+                   help="Technologies a project must share with a job (default 2)")
+    p.add_argument("--top", type=int, default=2, help="How many projects each pitch uses")
+    p.add_argument("--no-ai", action="store_true", help="Just list the fits, draft nothing")
+    p.add_argument("--all", action="store_true", help="Include jobs you've been shown before")
+    p.add_argument("--refresh", action="store_true",
+                   help=f"Read the boards again even if the saved copy is under {CACHE_HOURS}h old")
+    p.set_defaults(func=cmd_apply)
+
+    p = sub.add_parser("followup", parents=[common], help="Draft a follow-up for a sent pitch")
+    p.add_argument("pitch", help="Pitch name (as shown by `proof log`)")
+    p.set_defaults(func=cmd_followup)
+
+    p = sub.add_parser("prep", parents=[common], help="Get ready for a client call")
+    p.add_argument("target", help="Pitch name from `proof log`, or a job post (file, URL, -)")
+    p.add_argument("--top", type=int, default=2, help="Projects to use, for a job post")
+    p.add_argument("--no-ai", action="store_true", help="Only the fit and the gaps")
+    p.set_defaults(func=cmd_prep)
+
     p = sub.add_parser("lint", parents=[common], help="Check a pitch")
     p.add_argument("pitch", help="Pitch text file")
     p.add_argument("--job", help="Job post (file or URL), to check for missing tech")
@@ -494,8 +716,9 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     args.model = args.model or DEFAULT_MODELS[args.provider]
-    calls_llm = (args.command in ("case", "pitch", "profile", "eval", "suggest")
-                 and not getattr(args, "no_ai", False)
+    calls_llm = (args.command in ("case", "pitch", "profile", "eval", "suggest", "apply",
+                                  "followup", "prep")
+                 and not getattr(args, "no_ai", False) and getattr(args, "draft", 1) != 0
                  and not getattr(args, "dry_run", False) and not getattr(args, "models", None))
     if calls_llm and not args.model:
         sys.exit("Pick a model with --model or PROOF_MODEL.")

@@ -150,6 +150,11 @@ def mock_reply(prompt):
         return mock_suggestions(prompt)
     if "=== REPOSITORY SCAN ===" in prompt:
         return mock_case_study(prompt)
+    if "Task: write a short follow-up" in prompt:
+        return ("One more thing that fits your project: (mock) a detail the first message "
+                "didn't use. Would a short call on Thursday work?")
+    if "Task: write a one-page brief" in prompt:
+        return mock_prep(prompt)
     if "Resume bullets" in prompt:
         names = re.findall(r"^--- PROJECT: (.+) ---$", prompt, flags=re.MULTILINE)
         bullets = "\n".join(f"### {n}\n- Built {n}." for n in names)
@@ -160,6 +165,18 @@ def mock_reply(prompt):
     project = title.group(1).split(" - ")[0] if title else "my project"
     return (f"You need this built reliably. In {project} I built something very close "
             f"to it. Could we do a 15-minute call this week to go over your setup?")
+
+
+def mock_prep(prompt):
+    gaps = re.search(r"=== NOT SHOWN IN ANY PROJECT ===\n(.*?)\n===", prompt, flags=re.DOTALL)
+    gap_lines = [f"- {g.strip()}: (mock) how I'd get up to speed" for g in
+                 gaps.group(1).split(",") if g.strip() and g.strip() != "(none)"] if gaps else []
+    return ("## What they need\n- (mock) what the post asks for\n"
+            "## Questions they'll likely ask\n### Have you built this before?\n"
+            "(mock) Yes - see my projects.\n"
+            "## Gaps to be ready for\n" + ("\n".join(gap_lines) or "None.") + "\n"
+            "## Questions to ask them\n- Who will use it?\n"
+            "## 30-second intro\n(mock) I build software like this.")
 
 
 def mock_suggestions(prompt):

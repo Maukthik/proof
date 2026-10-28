@@ -296,7 +296,8 @@ class FakeAPI(BaseHTTPRequestHandler):
 
     def do_GET(self):
         page = {"/jobs/fastapi-dev": JOB_PAGE,
-                "/login-wall": "<html><body><h1>Please log in</h1></body></html>"}
+                "/login-wall": "<html><body><h1>Please log in</h1></body></html>",
+                "/jobs.rss": todays_feed()}
         self.reply(200, page.get(self.path, "not found").encode(), "text/html")
 
     def reply(self, status, data, content_type):
@@ -1391,3 +1392,178 @@ def test_agent_skill_file_is_valid():
     front = yaml.safe_load(skill.split("---")[1])
     assert front["name"] == "proof-case-study" and "case study" in front["description"]
     assert "proof check" in skill and "--save" in skill
+
+
+# ---------------------------------------------------------------------------
+# apply (job boards), follow-ups, call prep
+# ---------------------------------------------------------------------------
+
+FEEDS = TOOL / "tests" / "fixtures" / "feeds"
+PROJECTS = [  # as the matcher sees them (cli.searchable)
+    {"name": "ClientDesk", "text": "Next.js TypeScript Stripe webhooks Prisma PostgreSQL "
+                                   "role-based access React Tailwind"},
+    {"name": "Doppel", "text": "Python FastAPI LLM agents GitHub Actions REST API pytest"},
+]
+
+
+def all_fixture_jobs():
+    from proof import feeds
+    return (feeds.remotive_jobs(json.loads((FEEDS / "remotive.json").read_text()))
+            + feeds.remoteok_jobs(json.loads((FEEDS / "remoteok.json").read_text()))
+            + feeds.rss_jobs("wwr", (FEEDS / "wwr.rss").read_text())
+            + feeds.hn_thread_jobs("hn-freelance",
+                                   json.loads((FEEDS / "hn_freelance_thread.json").read_text())))
+
+
+def todays_feed():
+    """The We Work Remotely sample, posted today (so --days doesn't drop it)."""
+    from datetime import date
+    today = date.today().strftime("%d %b %Y")
+    return (FEEDS / "wwr.rss").read_text().replace("27 Oct 2026", today)
+
+
+def test_feed_readers():
+    jobs = {job["id"]: job for job in all_fixture_jobs()}
+    paybright = jobs["remotive:2001"]
+    assert paybright["company"] == "Paybright" and paybright["posted"] == "2026-10-26"
+    assert "Stripe subscriptions and webhooks" in paybright["text"]       # HTML -> text
+    assert "Tags: nextjs, typescript" in paybright["text"]
+    assert not any(job["title"] == "" for job in jobs.values())          # Remote OK's notice
+    acme = jobs["wwr:https://weworkremotely.com/remote-jobs/acme-labs-backend-developer"]
+    assert (acme["company"], acme["title"]) == ("Acme Labs", "Backend Developer (FastAPI, PostgreSQL)")
+    assert acme["posted"] == "2026-10-27" and acme["where"] == "Anywhere in the World"
+    hn = [job for job in jobs.values() if job["board"] == "hn-freelance"]
+    assert [job["title"] for job in hn] == ["Small design agency | Remote",
+                                            "Shopify theme tweaks, Liquid templates."]
+    assert "hello@example.com" in hn[0]["text"]                           # entities decoded
+
+
+def test_hn_hiring_titles_and_atom_feeds():
+    from proof import feeds
+    thread = {"children": [{"id": 1, "created_at": "2026-10-01T00:00:00Z",
+                            "text": "Acme | Senior Python Engineer | Remote | $150k<p>Django.</p>"}]}
+    job = feeds.hn_thread_jobs("hn", thread)[0]
+    assert (job["company"], job["title"]) == ("Acme", "Senior Python Engineer | Remote")
+    atom = """<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>tag:x,1</id>
+      <title>Go developer</title><link href="https://jobs.example.com/1"/>
+      <updated>2026-10-20T08:00:00Z</updated><summary>Go and gRPC.</summary></entry></feed>"""
+    job = feeds.rss_jobs("https://jobs.example.com/feed", atom)[0]
+    assert (job["title"], job["url"], job["posted"]) == ("Go developer", "https://jobs.example.com/1",
+                                                         "2026-10-20")
+    with pytest.raises(feeds.FeedError, match="DTD"):
+        feeds.rss_jobs("x", '<!DOCTYPE r [<!ENTITY a "aaaa">]><rss>&a;</rss>')
+    with pytest.raises(feeds.FeedError, match="unknown board"):
+        feeds.read_board("upwork", "/tmp")
+
+
+def test_find_fits_ranks_explains_and_filters():
+    from datetime import date
+    from proof.apply import find_fits
+    fits = find_fits(all_fixture_jobs(), PROJECTS, seen={}, days=14, min_tech=2,
+                     today=date(2026, 10, 28))
+    titles = [job["title"] for job, _ in fits]
+    assert titles[0] == "Senior Full-Stack Engineer (Next.js / Stripe)"
+    assert titles.count(titles[0]) == 1                  # on Remotive and Remote OK: kept once
+    assert fits[0][0]["board"] == "remotive"             # the copy with the fuller post
+    assert fits[0][1]["missing"] == ["kubernetes"]
+    assert fits[0][1]["projects"][0][0] == "ClientDesk"
+    assert "Python Developer - LLM evaluation tooling" in titles
+    for not_a_fit in ["Data Engineer", "Golang Backend Engineer", "Rails Developer",
+                      "Next.js + Stripe developer",       # posted in August: too old
+                      "Small design agency | Remote"]:    # posted 25 days ago
+        assert not_a_fit not in titles
+    seen = {fits[0][0]["id"]: "2026-10-28"}
+    again = find_fits(all_fixture_jobs(), PROJECTS, seen, 14, 2, today=date(2026, 10, 28))
+    assert fits[0][0]["id"] not in [job["id"] for job, _ in again]
+
+
+def test_seen_list_forgets_old_ids(tmp_path):
+    from datetime import date
+    from proof.apply import load_seen, save_seen
+    save_seen(tmp_path, {"old:1": "2026-01-01", "recent:2": "2026-10-01"},
+              [{"id": "new:3"}], today=date(2026, 10, 28))
+    assert load_seen(tmp_path) == {"recent:2": "2026-10-01", "new:3": "2026-10-28"}
+
+
+def test_apply_end_to_end(repos, tmp_path, fake_api):
+    run("case", str(repos["rag"]), "--provider", "mock", cwd=tmp_path)
+    facts = tmp_path / "proof_output" / "rag-bot" / "facts.md"
+    facts.write_text("Built REST API endpoints in FastAPI on PostgreSQL.\n")
+    feed = fake_api + "/jobs.rss"
+    code, out = run("apply", feed, "--provider", "mock", cwd=tmp_path)
+    assert code == 0, out
+    assert "1 fit your projects" in out and "Acme Labs" in out and "Rails" not in out
+    pitches = tmp_path / "proof_output" / "pitches"
+    assert (pitches / "acme-labs-backend-developer-fastapi-postgresql.md").exists()
+    assert "FastAPI" in (pitches / "acme-labs-backend-developer-fastapi-postgresql.job.txt").read_text()
+    digest = next((tmp_path / "proof_output" / "jobs").glob("20*.md")).read_text()
+    assert "[127.0.0.1:" in digest and "Pitch draft:" in digest
+
+    code, out = run("apply", feed, "--provider", "mock", cwd=tmp_path)   # nothing new
+    assert "saved copy" in out and "0 new job(s)" in out and "--refresh" in out
+    code, out = run("apply", feed, "--provider", "mock", "--all", cwd=tmp_path)
+    assert "Acme Labs" in out and "Drafting" not in out                  # already has a pitch
+
+    code, out = run("apply", "nope", "--provider", "mock", cwd=tmp_path)
+    assert code != 0 and "unknown board" in out
+
+
+def test_follow_up_reminders():
+    from datetime import date
+    from proof.tracker import report, to_do
+    log = {"a": {"status": "sent", "sent": "2026-10-20", "projects": []},
+           "b": {"status": "sent", "sent": "2026-10-27", "projects": []},
+           "c": {"status": "followed-up", "sent": "2026-10-01", "followed-up": "2026-10-10",
+                 "projects": []},
+           "d": {"status": "replied", "sent": "2026-10-01", "followed-up": "2026-10-06",
+                 "projects": []}}
+    today = date(2026, 10, 28)
+    assert to_do(log, today) == ([("a", 8)], [("c", 18)])
+    text = report(log, today)
+    assert "proof followup a" in text and "proof log c ignored" in text
+    assert "Follow-ups: 2 sent, 1 then got a reply" in text
+
+
+def test_lint_followup_and_prep():
+    from proof.lint import lint_followup, lint_prep
+    first = "You need a client portal. In ClientDesk I built role-based access for 3 roles."
+    sources = ["--- PROJECT: ClientDesk ---\nStripe webhooks in app/api/stripe/route.ts. "
+               "12 of 40 tests didn't run."]
+    stale = lint_followup("Just checking in - in ClientDesk I built role-based access for 3 "
+                          "roles. Any thoughts?", first, sources)
+    messages = " ".join(message for _, message in stale)
+    assert "no reason to reply" in messages and "Repeats your first message" in messages
+    good = lint_followup("Hi Sam, one more detail: ClientDesk handles Stripe webhooks, which "
+                         "your payments step needs. Want a quick look on Thursday?", first, sources)
+    assert good == []
+
+    brief = ("### Have you used Stripe?\nYes: app/api/stripe/route.ts handles webhooks, and "
+             "12 of 40 tests caught bugs. It served 5,000 users from lib/cache.ts.")
+    messages = " ".join(message for _, message in lint_prep(brief, sources))
+    assert "5,000" in messages and "lib/cache.ts" in messages and "route.ts" not in messages
+    assert "wrong meaning" in messages                     # "didn't run" became "caught"
+    assert lint_prep("## 30-second intro\nI built ClientDesk.", sources) == []   # a heading
+
+
+def test_followup_and_prep_commands(repos, tmp_path):
+    run("case", str(repos["rag"]), str(repos["shop"]), "--provider", "mock", cwd=tmp_path)
+    (tmp_path / "job.txt").write_text("FastAPI RAG chatbot with LangChain on Kubernetes")
+    run("pitch", "job.txt", "--provider", "mock", cwd=tmp_path)
+    code, out = run("followup", "job", "--provider", "mock", cwd=tmp_path)
+    assert code == 0 and "isn't marked as sent" in out
+    assert (tmp_path / "proof_output" / "pitches" / "job.followup.md").exists()
+
+    run("log", "job", "sent", cwd=tmp_path)
+    run("log", "job", "replied", "--note", "asked if I know Terraform", cwd=tmp_path)
+    code, out = run("followup", "job", "--provider", "mock", cwd=tmp_path)
+    assert code != 0 and "proof prep job" in out
+    code, out = run("prep", "job", "--provider", "mock", cwd=tmp_path)
+    assert code == 0, out
+    brief = (tmp_path / "proof_output" / "prep" / "job.md").read_text()
+    assert "Projects to talk about: rag-bot" in brief
+    assert "Not shown in any project: chatbot, kubernetes, terraform" in brief  # + reply
+    assert "## Questions to ask them" in brief
+
+    (tmp_path / "other.txt").write_text("React Tailwind storefront")
+    code, out = run("prep", "other.txt", "--no-ai", "--provider", "mock", cwd=tmp_path)
+    assert code == 0 and "Projects to talk about: shop-ui" in out and "## What they need" not in out

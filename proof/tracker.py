@@ -5,18 +5,22 @@ Every `proof pitch` adds an entry to proof_output/pitches/log.json (status "draf
 You update it as things happen:
 
   proof log need-a-fastapi-dev sent
+  proof log need-a-fastapi-dev followed-up
   proof log need-a-fastapi-dev replied
   proof log need-a-fastapi-dev won
 
-and `proof log` shows every pitch plus which projects and tech terms get replies.
+and `proof log` shows every pitch, which projects and tech terms get replies, and what
+to do next: pitches due a follow-up, and ones to give up on.
 """
 
 import json
 from datetime import date
 from pathlib import Path
 
-STATUSES = ["draft", "sent", "replied", "won", "ignored"]
+STATUSES = ["draft", "sent", "followed-up", "replied", "won", "ignored"]
 GOT_REPLY = {"replied", "won"}
+FOLLOW_UP_DAYS = 4       # no reply this long after sending: send one short follow-up
+GIVE_UP_DAYS = 10        # still nothing this long after the follow-up: mark it ignored
 
 
 def log_file(out_dir):
@@ -70,6 +74,31 @@ def update_status(out_dir, name, status, note=""):
     return key
 
 
+def days_since(entry, event, today):
+    """Days since the date stored for `event` ("sent", "followed-up"), or None."""
+    try:
+        return (today - date.fromisoformat(entry[event])).days
+    except (KeyError, ValueError):
+        return None
+
+
+def to_do(log, today=None):
+    """(pitches due a follow-up, pitches to give up on), as (name, days) lists.
+    One follow-up per pitch: a second one rarely helps and starts to annoy."""
+    today = today or date.today()
+    follow_up, give_up = [], []
+    for name, entry in sorted(log.items()):
+        if entry["status"] == "sent":
+            days = days_since(entry, "sent", today)
+            if days is not None and days >= FOLLOW_UP_DAYS:
+                follow_up.append((name, days))
+        elif entry["status"] == "followed-up":
+            days = days_since(entry, "followed-up", today)
+            if days is not None and days >= GIVE_UP_DAYS:
+                give_up.append((name, days))
+    return follow_up, give_up
+
+
 def reply_rates(log, field):
     """For each project (field="projects") or tech term (field="matched"):
     (sent, replies, wins) over all pitches that went out."""
@@ -85,8 +114,8 @@ def reply_rates(log, field):
     return sorted(rates.items(), key=lambda kv: (-kv[1][1] / kv[1][0], -kv[1][0]))
 
 
-def report(log):
-    """Text table of all pitches, then what's working."""
+def report(log, today=None):
+    """Text table of all pitches, what's working, then what to do next."""
     if not log:
         return "No pitches yet. Write one with:  proof pitch <job file, URL or ->"
     lines = [f"{'pitch':<34} {'status':<8} {'written':<11} projects"]
@@ -108,4 +137,23 @@ def report(log):
         if rows:
             lines.append(f"\n{title} (used in 2+ sent pitches):")
             lines += [f"  {item:<28} {r}/{s} replies, {w} won" for item, (s, r, w) in rows]
+
+    followed = [e for e in sent if "followed-up" in e]
+    if followed:
+        answered = sum(e["status"] in GOT_REPLY for e in followed)
+        lines.append(f"\nFollow-ups: {len(followed)} sent, {answered} then got a reply")
+    lines += to_do_lines(*to_do(log, today))
     return "\n".join(lines)
+
+
+def to_do_lines(follow_up, give_up):
+    lines = []
+    if follow_up:
+        lines.append(f"\nDue a follow-up (sent {FOLLOW_UP_DAYS}+ days ago, no reply):")
+        lines += [f"  {name:<34} {days} days  ->  proof followup {name}"
+                  for name, days in follow_up]
+    if give_up:
+        lines.append(f"\nNo reply {GIVE_UP_DAYS}+ days after your follow-up - let them go:")
+        lines += [f"  {name:<34} {days} days  ->  proof log {name} ignored"
+                  for name, days in give_up]
+    return lines

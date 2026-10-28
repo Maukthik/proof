@@ -194,7 +194,8 @@ def missing_files(text, files, sources=()):
     mentioned = "\n".join(sources)
     unknown = []
     for match in PATH.finditer(text):
-        path = (match.group(1) or match.group(2)).strip("()").removeprefix("./")
+        # rstrip: a path that ends a sentence ("... in lib/cache.ts.")
+        path = (match.group(1) or match.group(2)).strip("()").removeprefix("./").rstrip(".")
         is_file = re.search(r"\.[a-z]{1,6}$", path) is not None
         if not (is_file or path.endswith("/")) or "://" in text[match.start():match.end() + 3]:
             continue
@@ -244,7 +245,7 @@ def vague_highlights(text):
 # Pitches
 # ---------------------------------------------------------------------------
 
-def lint_pitch(pitch, job="", sources=None):
+def lint_pitch(pitch, job="", sources=None, max_words=MAX_WORDS, check_opening=True):
     """`sources`: case studies and facts the pitch was written from. When given,
     numbers in the pitch that aren't in them (or the job post) are flagged."""
     problems = []
@@ -267,10 +268,10 @@ def lint_pitch(pitch, job="", sources=None):
                                      f'says "{said}".'))
 
     count = len(text.split())
-    if count > MAX_WORDS:
-        problems.append(("WARN", f"{count} words - clients skim; aim for under {MAX_WORDS}."))
+    if max_words and count > max_words:
+        problems.append(("WARN", f"{count} words - clients skim; aim for under {max_words}."))
 
-    if lower.startswith(WEAK_OPENINGS):
+    if check_opening and lower.startswith(WEAK_OPENINGS):
         problems.append(("WARN", "Opens with a greeting/intro. Open with the client's problem instead."))
 
     found = [b for b in BUZZWORDS if b in lower]
@@ -287,6 +288,59 @@ def lint_pitch(pitch, job="", sources=None):
             problems.append(("INFO", f"Job mentions {', '.join(missing)} but your pitch doesn't. "
                                      "Address them if you can, or say how you'd handle them."))
 
+    return problems
+
+
+# Follow-ups that give the client no new reason to answer
+NOTHING_NEW = ["just following up", "just checking in", "checking in", "circling back",
+               "bumping this", "touch base", "touching base", "any update", "any updates",
+               "did you get a chance", "did you see my", "sorry to bother"]
+MAX_FOLLOW_UP_WORDS = 100
+
+
+def lint_followup(text, first_message, sources):
+    """A follow-up should be short, say something new, and keep to the facts."""
+    # "Hi Sam," is fine in a follow-up, and the length limit is ours, below
+    problems = lint_pitch(text, sources=list(sources) + [first_message],
+                          max_words=None, check_opening=False)
+    lower = text.lower()
+    stale = [phrase for phrase in NOTHING_NEW if phrase in lower]
+    if stale:
+        problems.append(("WARN", f"\"{stale[0]}\" gives them no reason to reply - "
+                                 "lead with the new detail instead."))
+    repeated = copied_phrases(text, first_message, length=8)
+    if repeated:
+        problems.append(("WARN", f"Repeats your first message (\"{repeated[0]}...\") - "
+                                 "say something new."))
+    count = len(text.split())
+    if count > MAX_FOLLOW_UP_WORDS:
+        problems.append(("WARN", f"{count} words - a follow-up should be under "
+                                 f"{MAX_FOLLOW_UP_WORDS}."))
+    return problems
+
+
+def lint_prep(text, sources):
+    """A call brief must not hand you claims your projects don't back up."""
+    problems = []
+    if "[add:" in text:
+        problems.append(("WARN", "Has an [add: ...] placeholder - that fact is missing from "
+                                 "your case study; don't claim it on the call."))
+    # Headings are the prompt's ("30-second intro") or the client's questions: not claims
+    answers = re.sub(r"^#.*$", "", text, flags=re.MULTILINE)
+    numbers = unsupported_numbers(answers, sources)
+    if numbers:
+        problems.append(("WARN", f"Numbers not in your case studies: {', '.join(numbers)}. "
+                                 "Don't quote them unless they're true."))
+    for number, said in flipped_numbers(answers, sources):
+        problems.append(("WARN", f'"{number}" may have the wrong meaning: your case study '
+                                 f'says "{said}".'))
+    unknown = missing_files(text, [], sources)
+    if unknown:
+        problems.append(("WARN", f"Files your case studies don't mention: {', '.join(unknown)}"
+                                 " - check they exist before naming them."))
+    found = [b for b in BUZZWORDS + FILLER if b in text.lower()]
+    if found:
+        problems.append(("INFO", f"Buzzwords: {', '.join(dict.fromkeys(found))}."))
     return problems
 
 
