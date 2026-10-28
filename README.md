@@ -10,6 +10,9 @@ from scratch. `proof` reads your GitHub repos and gives you:
 3. **Profile text**: an Upwork/LinkedIn "about" section and resume bullets.
 4. **A portfolio page** that can rebuild itself every time you push code.
 5. **A pitch log** that shows which projects and skills actually get replies.
+6. **Suggestions**: what to build next in a project so it's stronger proof, as tasks you can
+   hand to a coding assistant.
+7. **An eval and a training kit**: score models on the task, and fine-tune a local one.
 
 ```
 your repos ──case──▶ case studies ──pitch──▶ pitch for a job post (+ lint, + log)
@@ -21,8 +24,9 @@ Works with Python (incl. notebooks), JavaScript/TypeScript (React, Next.js, Node
 Java/Kotlin (Spring, Android), plus Ruby and PHP dependency files. Tested on 19 real repos,
 from a 1-file repo to 5,500-commit projects.
 
-It never invents results. Missing facts become `[add: ...]` gaps, and every number in
-generated text is checked against your repo and your own notes.
+It never invents results. Missing facts become `[add: ...]` gaps, every number in generated
+text is checked against your repo and your own notes, and each result in a case study links
+to the README line it comes from.
 
 ## Install
 
@@ -79,7 +83,20 @@ proof site --owner "Your Name" --contact "you@mail.com · github.com/you"
 
 # Check any pitch you wrote yourself
 proof lint my_pitch.txt --job upwork_job.txt
+
+# 7. What to build next in a project: a checklist, what clients asked for, ideas + tasks
+proof suggest ./doppel                 # -> proof_output/doppel/suggestions.md
+proof suggest ./doppel --no-ai         # checklist and client asks only, instant
+
+# 8. Which model writes the best case studies? (repeat after any prompt change)
+proof eval ./doppel ./client-desk --provider ollama --models llama3.1:8b-instruct-q4_K_M qwen3:4b
+
+# 9. Training data for fine-tuning a local model (see training/README.md)
+proof dataset --exclude doppel client-desk
 ```
+
+A file listing repos (one per line, `#` comments) works anywhere repos go: `proof case
+"@training/repos.txt"` (keep the quotes in PowerShell).
 
 Output layout:
 ```
@@ -130,7 +147,9 @@ so a quiet day costs no LLM calls.
 
 | File | Job |
 |---|---|
-| `proof/cli.py` | Command line: `case`, `pitch`, `lint`, `profile`, `site`, `log` |
+| `proof/cli.py` | Command line: `case`, `pitch`, `lint`, `profile`, `site`, `log`, `suggest`, `eval`, `dataset` |
+| `proof/casestudy.py` | One case study: draft, checks, one repair round, source links |
+| `proof/claims.py` | Links each result to the README line it comes from |
 | `proof/scan.py` | Reads a repo (incl. notebooks) and picks what the LLM sees |
 | `proof/stack.py` | Detects the stack from dependency files, imports and languages |
 | `proof/codemap.py` | Which files import which: the skeleton of the architecture diagram |
@@ -142,6 +161,10 @@ so a quiet day costs no LLM calls.
 | `proof/lint.py` | Checks: placeholders, invented numbers, length, openers, buzzwords, format |
 | `proof/tracker.py` | The pitch log |
 | `proof/portfolio.py` | Builds the portfolio page |
+| `proof/suggest.py` | What to build next: checklist, client asks, ideas as coding tasks |
+| `proof/evaluate.py` | `proof eval`: scores models with the checks, compares with the last run |
+| `proof/dataset.py` | Fine-tuning data from case studies we trust |
+| `training/` | Fine-tuning kit: public repo list, Kaggle training script, Ollama Modelfile, guide |
 | `templates/` | GitHub Actions (see above) |
 | `tools/survey.py` | Dev check: what the model would see, across many repos |
 | `examples/` | Real output for two projects: case studies, a pitch, a profile, the page |
@@ -159,5 +182,7 @@ python -m pytest -q          # no LLM or internet needed
 - [x] Profile text and resume bullets
 - [x] Pitch log with reply rates per project and skill
 - [x] Portfolio page + GitHub Actions to keep it updated
+- [x] Claim links, `proof eval`, `proof suggest`, fine-tuning kit
 - [ ] Tune prompts on real model output (see CLAUDE.md)
+- [ ] Run the fine-tuning loop for real (training/README.md)
 - [ ] `proof apply`: watch a job feed and draft pitches for good matches

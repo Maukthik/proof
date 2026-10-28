@@ -1159,3 +1159,63 @@ def test_training_repo_list_is_valid():
     repos = expand_repo_lists([f"@{TOOL / 'training' / 'repos.txt'}"])
     assert len(repos) >= 30 and all(r.startswith("https://github.com/") for r in repos)
     assert not any("maukthik" in r.lower() for r in repos)      # your repos are the test set
+
+
+# ---------------------------------------------------------------------------
+# proof suggest
+# ---------------------------------------------------------------------------
+
+def test_checklist_on_a_bare_and_a_ready_repo(tmp_path):
+    from proof.scan import list_files
+    from proof.suggest import checklist
+    bare = make_repo(tmp_path, "bare", {"README.md": "# Bare\nA tool.",
+                                        "app.py": 'import os\nkey = os.environ["OPENAI_API_KEY"]\n'
+                                                  'rank = os.environ.get("RANK")\n'})
+    missing = [what for ok, what, _, _ in checklist(bare, list_files(bare), tmp_path) if not ok]
+    assert {"Results section in the README", "Automated tests", ".env.example", "License",
+            "Live demo or video link"} <= set(missing)
+
+    readme = ("# Ready\n" + "word " * 160 + "\n![shot](shot.png)\nTry it: https://ready.vercel.app\n"
+              "## Quick start\npip install ready\n## Results\n40% faster.\n")
+    ready = make_repo(tmp_path, "ready", {"README.md": readme, "LICENSE": "MIT",
+                                          "app.py": 'import os\nrank = os.environ.get("RANK")\n',
+                                          "tests/test_app.py": "", "Dockerfile": "FROM python",
+                                          ".github/workflows/ci.yml": "on: push"})
+    assert all(ok for ok, *_ in checklist(ready, list_files(ready), tmp_path))
+
+
+def test_unfilled_facts_count(tmp_path):
+    from proof.suggest import unfilled_facts
+    (tmp_path / "facts.md").write_text("<!-- help: x -->\n- users: 40\n- accuracy: \n- speed:\n")
+    assert unfilled_facts(tmp_path) == 2
+
+
+def test_what_clients_asked_for(repos, tmp_path):
+    run("case", str(repos["rag"]), "--provider", "mock", cwd=tmp_path)
+    jobs = ["FastAPI RAG bot on AWS with Redis", "LangChain RAG bot, deploy to AWS"]
+    for i, job in enumerate(jobs):
+        (tmp_path / f"job{i}.txt").write_text(job)
+        run("pitch", f"job{i}.txt", "--provider", "mock", cwd=tmp_path)
+    code, out = run("suggest", str(repos["rag"]), "--no-ai", cwd=tmp_path)
+    assert code == 0, out
+    report = (tmp_path / "proof_output" / "rag-bot" / "suggestions.md").read_text()
+    assert "also asked for: aws (2), redis (1)" in report
+    assert "## Ideas" not in report                                  # --no-ai
+
+
+def test_suggest_with_ideas_and_tasks(repos, tmp_path):
+    code, out = run("suggest", str(repos["rag"]), "--provider", "mock", cwd=tmp_path)
+    assert code == 0, out
+    report = (tmp_path / "proof_output" / "rag-bot" / "suggestions.md").read_text()
+    assert "## Checklist (" in report and "### Add a usage example" in report
+    assert "## Tasks for a coding assistant" in report and "In the rag-bot repo:" in report
+    assert "WARN" not in out                                         # examples/demo.md is (new)
+
+
+def test_ideas_naming_unknown_files_are_flagged():
+    from proof.suggest import parse_ideas, unknown_files
+    text = ("### Faster search\n- What: cache results.\n- Where: app/main.py, cache.py (new), "
+            "lib/ghost.py\n- Size: small (hours)\n- Done when: second search is instant.\n")
+    ideas = parse_ideas(text)
+    assert ideas[0]["title"] == "Faster search" and ideas[0]["Size"] == "small (hours)"
+    assert unknown_files(ideas, ["app/main.py"], []) == ["lib/ghost.py"]

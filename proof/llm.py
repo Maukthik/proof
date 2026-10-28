@@ -146,6 +146,8 @@ def fix_mermaid(text):
 # ---------------------------------------------------------------------------
 
 def mock_reply(prompt):
+    if "=== CHECKLIST ===" in prompt:
+        return mock_suggestions(prompt)
     if "=== REPOSITORY SCAN ===" in prompt:
         return mock_case_study(prompt)
     if "Resume bullets" in prompt:
@@ -158,6 +160,16 @@ def mock_reply(prompt):
     project = title.group(1).split(" - ")[0] if title else "my project"
     return (f"You need this built reliably. In {project} I built something very close "
             f"to it. Could we do a 15-minute call this week to go over your setup?")
+
+
+def mock_suggestions(prompt):
+    """One idea, about the first file the scan shows."""
+    shown = re.search(r"^# File: (.+)$", prompt, flags=re.MULTILINE)
+    where = shown.group(1) if shown else "README.md"
+    return (f"### Add a usage example\n- What: (mock) show how to use {where}.\n"
+            f"- Why a client cares: they see it working.\n"
+            f"- Where: {where}, examples/demo.md (new)\n"
+            f"- Size: small (hours)\n- Done when: the example runs.\n")
 
 
 def mock_case_study(prompt):

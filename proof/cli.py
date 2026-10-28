@@ -29,12 +29,12 @@ from pathlib import Path
 
 from .facts import fingerprint, read_facts, start_facts_file
 from .jobpost import read_job
-from . import casestudy, dataset, evaluate
+from . import casestudy, dataset, evaluate, suggest
 from .lint import lint_pitch, print_problems, unsupported_numbers
 from .llm import DEFAULT_MODELS, ask_llm, scan_budget, strip_wrapper
-from .match import rank_projects
+from .match import rank_projects, tech_in
 from .portfolio import build_site, load_case_studies
-from .prompts import PITCH, PROFILE
+from .prompts import PITCH, PROFILE, SUGGEST
 from .scan import (detect_stack, get_repo, has_enough_to_write_about, head_commit, is_url,
                    list_files, pushed_commit, remote_head, repo_name, scan_repo, web_url)
 from .tracker import STATUSES, load_log, record_pitch, report, update_status
@@ -173,6 +173,50 @@ def cmd_dataset(args):
     print(dataset.summary(examples, args.to))
 
 
+def cmd_suggest(args):
+    if not is_url(args.repo) and not Path(args.repo).expanduser().is_dir():
+        sys.exit(f"Not a folder: {args.repo}")
+    with tempfile.TemporaryDirectory(prefix="proof_") as clone_dir:
+        repo = get_repo(args.repo, clone_dir)
+        out_dir = Path(args.out)
+        files = list_files(repo)
+        checks = suggest.checklist(repo, files, out_dir)
+        projects = [p for p in load_case_studies(out_dir) if p["slug"] == repo.name]
+        project_text = projects[0]["text"] if projects else ""
+        names = {repo.name} | {p["name"] for p in projects}
+        wanted = suggest.asked_for(out_dir, names, project_text + " ".join(detect_stack(repo)))
+
+        ideas_text, ideas, warnings = None, [], []
+        if not args.no_ai:
+            repo_scan = scan_repo(repo, budget=scan_budget(args.provider))
+            print(f"[{repo.name}] asking {args.provider}/{args.model} for ideas ...")
+            ideas_text = strip_wrapper(ask_llm(SUGGEST.format(
+                repo_scan=repo_scan, checklist=checklist_text(checks),
+                wanted=", ".join(f"{t} ({n})" for t, n in wanted.items()) or "(nothing yet)"),
+                args.provider, args.model))
+            ideas = suggest.parse_ideas(ideas_text)
+            unknown = suggest.unknown_files(ideas, [f.as_posix() for f in files], [repo_scan])
+            if unknown:
+                warnings.append(f"these files aren't in the repo: {', '.join(unknown)} - "
+                                "the model may have guessed them")
+
+    target = out_dir / repo.name / "suggestions.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(suggest.report(repo.name, checks, wanted, ideas_text, ideas, warnings),
+                      encoding="utf-8")
+    done = sum(passed for passed, *_ in checks)
+    print(f"[{repo.name}] checklist {done}/{len(checks)}, {len(ideas)} ideas -> {target}")
+    for passed, what, _, fix in checks:
+        if not passed:
+            print(f"  [ ] {what}: {fix}")
+    for warning in warnings:
+        print(f"  WARN  {warning}")
+
+
+def checklist_text(checks):
+    return "\n".join(f"- [{'x' if passed else ' '}] {what}" for passed, what, _, _ in checks)
+
+
 # ---------------------------------------------------------------------------
 # pitch / lint / profile
 # ---------------------------------------------------------------------------
@@ -224,7 +268,7 @@ def cmd_pitch(args):
     pitch_file.write_text(pitch + "\n", encoding="utf-8")
     matched = sorted({term for p in chosen for term in p["matched"]})
     record_pitch(args.out, job_name, args.job if args.job != "-" else "pasted",
-                 [p["name"] for p in chosen], matched)
+                 [p["name"] for p in chosen], matched, job_tech=tech_in(job))
 
     print(f"Saved {pitch_file}\n")
     print(pitch, "\n")
@@ -346,6 +390,11 @@ def main(argv=None):
     p.add_argument("--exclude", nargs="+", help="Repos to keep out (e.g. the ones you eval on)")
     p.set_defaults(func=cmd_dataset)
 
+    p = sub.add_parser("suggest", parents=[common], help="What to build next in a project")
+    p.add_argument("repo", help="Local folder or GitHub URL")
+    p.add_argument("--no-ai", action="store_true", help="Checklist and client asks only")
+    p.set_defaults(func=cmd_suggest)
+
     p = sub.add_parser("pitch", parents=[common], help="Write a pitch for a job post")
     p.add_argument("job", help="Job post: a text file, a URL, or - to paste it")
     p.add_argument("--top", type=int, default=2, help="How many projects to use")
@@ -373,7 +422,8 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     args.model = args.model or DEFAULT_MODELS[args.provider]
-    calls_llm = (args.command in ("case", "pitch", "profile", "eval")
+    calls_llm = (args.command in ("case", "pitch", "profile", "eval", "suggest")
+                 and not getattr(args, "no_ai", False)
                  and not getattr(args, "dry_run", False) and not getattr(args, "models", None))
     if calls_llm and not args.model:
         sys.exit("Pick a model with --model or PROOF_MODEL.")

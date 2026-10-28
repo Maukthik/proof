@@ -142,3 +142,37 @@ everything that was right. Use only files, numbers and facts that appear in the 
 facts; where a fact is missing, write an [add: ...] placeholder instead of guessing.
 Output only the corrected case study, starting with the "# " title line.
 """
+
+
+SUGGEST = """Below is a scan of a developer's repository, a checklist of what clients look for,
+and technologies clients asked for in jobs the developer applied to with this project.
+
+=== REPOSITORY SCAN ===
+{repo_scan}
+=== END OF REPOSITORY SCAN ===
+
+=== CHECKLIST ===
+{checklist}
+=== END OF CHECKLIST ===
+
+=== WHAT CLIENTS ASKED FOR ===
+{wanted}
+=== END ===
+
+Task: suggest 3-5 features or improvements to build next in THIS project, so it becomes
+stronger proof for clients like the ones above. Prefer small, visible changes a client would
+notice, built on the code that is already there. Don't repeat checklist items unless you
+make them specific to this code.
+
+For each one, use exactly this shape (the shape shows the form only):
+### <short title>
+- What: <one or two sentences, specific to this code>
+- Why a client cares: <one sentence>
+- Where: <real files from the scan to change; new files marked (new)>
+- Size: <small (hours) | medium (a day) | large (days)>
+- Done when: <a check anyone can do: a command to run, or a result to see>
+
+Rules:
+- Name only files that appear in the scan, or new files marked (new).
+- Output only the ideas.
+"""

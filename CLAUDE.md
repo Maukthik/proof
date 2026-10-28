@@ -10,7 +10,9 @@ application/proposal gets rewritten from scratch.
 
 ## Layout
 Everything is in the `proof/` package (installed as the `proof` command via `pyproject.toml`).
-- `proof/cli.py`: CLI with `case`, `pitch`, `lint`, `profile`, `site`, `log`
+- `proof/cli.py`: CLI with `case`, `pitch`, `lint`, `profile`, `site`, `log`, `suggest`, `eval`, `dataset`
+- `proof/casestudy.py`: one case study: draft -> lint checks -> one repair round (prompts.REVISE) -> source links
+- `proof/claims.py`: links each Results line to the README line stating the same numbers the same way
 - `proof/scan.py`: reads a repo (git-tracked files only), picks what the LLM sees, sized to the model's context
 - `proof/stack.py`: stack detection without an LLM: dependency files (Python, JS, Go, Rust, JVM/Android, Ruby, PHP), imports, language shares
 - `proof/codemap.py`: which files import which (Python, JS/TS, Go, Java/Kotlin, Rust): grounds the architecture diagram
@@ -22,6 +24,12 @@ Everything is in the `proof/` package (installed as the `proof` command via `pyp
 - `proof/lint.py`: rule-based checks: pitch lint, case study format, numbers not found in any source
 - `proof/tracker.py`: pitch log (`proof_output/pitches/log.json`) and reply rates
 - `proof/portfolio.py`: static portfolio page (Python-Markdown + Mermaid via CDN)
+- `proof/suggest.py`: what to build next: client-readiness checklist, techs clients asked for (pitch
+  log `job_tech`), model ideas turned into coding-assistant tasks
+- `proof/evaluate.py`: `proof eval`: repo x model, scored by lint checks only, compared with the last run
+- `proof/dataset.py`: `proof dataset`: chat-format JSONL from edited / clean / eval case studies
+- `training/`: fine-tuning kit (repos.txt, train_lora.py for Kaggle + Unsloth, Modelfile, README).
+  train_lora.py has never been run (no GPU where it was written)
 - `templates/`: GitHub Actions: portfolio (Pages, daily + on ping), ping-portfolio, per-project case study
 - `tests/test_proof.py`: pytest, no network or LLM needed
 - `tools/survey.py`: dev check of what the model sees, across many real repos
@@ -85,10 +93,13 @@ Second run: the 8B model COPIED the prompt's realistic examples into both case s
   avoid them.
 
 ## Next gaps to close (in priority order)
+0. Use `proof eval` for every prompt change: run it before and after, keep only improvements.
 1. Keep tuning `prompts.py` on Mauk's real repos with a real model (`proof case ... --force`). Save each
    real output that shows a new failure in tests/fixtures/ with a test that catches it. Look at: sections missing, diagram boxes that don't exist, numbers
    flagged by the claim check, generic "Skills shown".
 2. Try the templates for real: a `portfolio` repo with repos.txt, Pages on, one ping from doppel.
-3. `proof apply`: watch a job feed (RSS / saved search) and draft pitches for good matches.
-4. Learn from the pitch log: feed the best-replying projects/angles back into the pitch prompt.
-5. Publish to PyPI (name `proof-cli` in pyproject.toml) once the real-model output is good.
+3. Run the fine-tuning loop for real (training/README.md): teacher data on Groq/Anthropic,
+   Kaggle training, then `proof eval` old vs fine-tuned. Fix train_lora.py if Unsloth/TRL renamed things.
+4. `proof apply`: watch a job feed (RSS / saved search) and draft pitches for good matches.
+5. Learn from the pitch log: feed the best-replying projects/angles back into the pitch prompt.
+6. Publish to PyPI (name `proof-cli` in pyproject.toml) once the real-model output is good.

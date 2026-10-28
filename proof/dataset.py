@@ -109,7 +109,8 @@ def summary(examples, path):
     longest = max(len(e["prompt"]) + len(e["answer"]) for e in examples)
     lines = [f"Wrote {len(examples)} examples to {path}",
              "  " + ", ".join(f"{n} {kind}" for kind, n in by_source.items()),
-             f"  longest example: ~{longest // 3:,} tokens (MAX_TOKENS in training/train_lora.py must be above this)"]
+             f"  longest example: ~{longest // 3:,} tokens "
+             "(MAX_TOKENS in training/train_lora.py must be above this)"]
     if len(examples) < MIN_EXAMPLES:
         lines.append(f"  WARN  only {len(examples)} examples; aim for {MIN_EXAMPLES}+ or the model "
                      "will learn these repos by heart instead of the task")

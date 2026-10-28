@@ -34,12 +34,14 @@ def save_log(out_dir, log):
     path.write_text(json.dumps(log, indent=2), encoding="utf-8")
 
 
-def record_pitch(out_dir, name, source, projects, matched):
-    """Called after writing a pitch. Re-writing a pitch keeps its status and notes."""
+def record_pitch(out_dir, name, source, projects, matched, job_tech=()):
+    """Called after writing a pitch. Re-writing a pitch keeps its status and notes.
+    job_tech: every technology the job asked for (`proof suggest` uses it to see what
+    clients want that your projects don't show yet)."""
     log = load_log(out_dir)
     entry = log.get(name, {"status": "draft", "notes": []})
     entry.update({"source": source, "projects": projects, "matched": matched,
-                  "written": date.today().isoformat()})
+                  "job_tech": sorted(job_tech), "written": date.today().isoformat()})
     log[name] = entry
     save_log(out_dir, log)
 
