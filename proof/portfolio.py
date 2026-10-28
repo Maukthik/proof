@@ -65,7 +65,8 @@ def to_html(md_text):
 
 # Tools every project has, or that no client searches for: shown after the rest
 MINOR_TOOLS = {"GitHub Actions", "pytest", "Jest", "Vitest", "Nodemailer", "httpx", "Pydantic",
-               "Uvicorn", "NumPy", "pandas", "matplotlib", "Pillow", "Zod", "Vite", "Jupyter"}
+               "Uvicorn", "NumPy", "pandas", "matplotlib", "Pillow", "Zod", "Vite", "Jupyter",
+               "Gradle", "Maven", "JUnit", "Serde", "Alembic", "SQL"}
 
 
 def headline_stack(stack, count=6):

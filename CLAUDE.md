@@ -11,8 +11,9 @@ application/proposal gets rewritten from scratch.
 ## Layout
 Everything is in the `proof/` package (installed as the `proof` command via `pyproject.toml`).
 - `proof/cli.py`: CLI with `case`, `pitch`, `lint`, `profile`, `site`, `log`
-- `proof/scan.py`: reads a repo, picks what the LLM sees (sized to the model's context), detects the stack without an LLM
-- `proof/codemap.py`: which files import which (Python, JS/TS): grounds the architecture diagram
+- `proof/scan.py`: reads a repo (git-tracked files only), picks what the LLM sees, sized to the model's context
+- `proof/stack.py`: stack detection without an LLM: dependency files (Python, JS, Go, Rust, JVM/Android, Ruby, PHP), imports, language shares
+- `proof/codemap.py`: which files import which (Python, JS/TS, Go, Java/Kotlin, Rust): grounds the architecture diagram
 - `proof/prompts.py`: the LLM instructions (case study, pitch, profile). Material first, instructions last
 - `proof/llm.py`: providers: anthropic, ollama, openai-compatible, mock (offline); retries; tidies replies (fences, preamble, Mermaid labels)
 - `proof/facts.py`: per-project `facts.md`, written by the user, used for every claim
@@ -23,6 +24,7 @@ Everything is in the `proof/` package (installed as the `proof` command via `pyp
 - `proof/portfolio.py`: static portfolio page (Python-Markdown + Mermaid via CDN)
 - `templates/`: GitHub Actions: portfolio (Pages, daily + on ping), ping-portfolio, per-project case study
 - `tests/test_proof.py`: pytest, no network or LLM needed
+- `tools/survey.py`: dev check of what the model sees, across many real repos
 - `examples/`: real output for doppel and client-desk: case studies, a pitch, a profile, the page
   (LLM replies written by Claude by hand from the real prompts, run through the real pipeline;
   see examples/README.md). Use them as the quality bar when tuning prompts.
@@ -36,6 +38,12 @@ Everything is in the `proof/` package (installed as the `proof` command via `pyp
   fixtures. Most bugs so far were found that way: side folders swamping the scan, dev deps counted as
   stack, README results cut off, root-level test files and legacy/ read as main code, schema.prisma
   never read, prompts too long for Ollama's context (it silently drops the START of the prompt).
+- After touching scan.py / stack.py / codemap.py, run `python tools/survey.py <repos>` on repos of
+  different stacks and sizes. The set used so far: Mauk's doppel (1,200 files), client-desk, codefork,
+  gemma4, doppel-demo, doppel-shop-demo, doppel-try, FinanceFlow/FinanceFlow1/test1/git-journey (empty or
+  near-empty: must be skipped), plus public fastapi/full-stack-fastapi-template, pallets/flask,
+  karpathy/nanoGPT, jakevdp/PythonDataScienceHandbook, shadcn-ui/taxonomy, charmbracelet/glow (Go),
+  BurntSushi/ripgrep (Rust), spring-projects/spring-petclinic (Java), android/sunflower (Kotlin).
 - Check the portfolio page in a real browser when touching portfolio.py (desktop/mobile, light/dark,
   and that every Mermaid diagram draws).
 
@@ -54,6 +62,9 @@ extraction, case study format + invented-number checks, Mermaid label fixing, jo
 file/URL/stdin + linter, profile + resume bullets, pitch log with reply rates, portfolio page (checked
 desktop/mobile, light/dark, broken diagrams hidden), GH Action templates (portfolio on Pages,
 ping, per-project), packaging (`pipx install git+https://github.com/Maukthik/proof`).
+
+Tested on 19 real repos (see "How to work on it"): stacks, reading order, import maps, matching,
+the 16-project portfolio page, URL clone + skip-without-clone, local folders with node_modules.
 
 Not yet verified: output quality from a real model (no model could be run where this was built).
 That's the first thing to check.

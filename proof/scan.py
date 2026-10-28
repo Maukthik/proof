@@ -4,12 +4,14 @@ scan.py - read a repo and summarise it for the LLM.
 Main functions:
   get_repo(arg)       -> local Path (clones GitHub URLs)
   repo_name(arg)      -> "my-app", for a URL or a folder
-  detect_stack(repo)  -> ["Python", "FastAPI", "Docker", ...]   (no LLM needed)
+  list_files(repo)    -> the repo's files (what git tracks; never node_modules or .env)
+  detect_stack(repo)  -> ["Python", "FastAPI", "Docker", ...]   (no LLM needed, see stack.py)
   scan_repo(repo)     -> one big text block: tree + stack + how files connect + key files
   head_commit(repo)   -> current commit id, used for caching
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -17,12 +19,13 @@ import tempfile
 from pathlib import Path
 
 from .codemap import describe_imports, internal_imports
+from .stack import CONFIG_FILE, LANGUAGES, detect, main_languages
 
 # Folders we never look inside
 SKIP_DIRS = {
     ".git", "node_modules", "venv", ".venv", "env", "__pycache__", "dist",
     "build", ".next", ".idea", ".vscode", "target", ".mypy_cache", ".pytest_cache",
-    "proof_output",
+    "proof_output", ".gradle", "coverage", "htmlcov", ".tox", ".nox", "site-packages",
 }
 
 # Files that tell us the stack / how it's deployed - read these first
@@ -30,80 +33,56 @@ IMPORTANT_FILES = [
     "requirements.txt", "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
     "pom.xml", "build.gradle", "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
     "Makefile", "CMakeLists.txt", ".env.example",   # .env.example names the services used
+    "build.gradle.kts", "libs.versions.toml", "Gemfile", "composer.json",
 ]
 
-# File extension -> language
-LANGUAGES = {
-    ".py": "Python", ".js": "JavaScript", ".jsx": "JavaScript", ".ts": "TypeScript",
-    ".tsx": "TypeScript", ".go": "Go", ".rs": "Rust", ".java": "Java", ".c": "C",
-    ".cpp": "C++", ".cs": "C#", ".rb": "Ruby", ".php": "PHP", ".kt": "Kotlin",
-    ".swift": "Swift", ".ino": "Arduino", ".sql": "SQL", ".tf": "Terraform",
-    ".ipynb": "Jupyter",
-}
+# Secrets: never listed, never read (.env.example and friends are fine: they hold no values)
+SECRET_FILE = re.compile(r"^\.env(\.(?!example$|sample$|template$)\w+)?$|\.(pem|key|p12|pfx)$"
+                         r"|^id_(rsa|ed25519|ecdsa)$|^credentials\.json$|secrets?\.toml$")
+
 # Schemas describe the data model: often the clearest picture of what an app does
 SCHEMA_EXTENSIONS = {".prisma", ".graphql", ".proto"}
 CODE_EXTENSIONS = set(LANGUAGES) | SCHEMA_EXTENSIONS | {".h", ".yml", ".yaml"}
 
-# Python import name -> nice name, when it differs from the pip name
-IMPORT_NAMES = {
-    "sklearn": "scikit-learn", "cv2": "OpenCV", "PIL": "Pillow", "bs4": "BeautifulSoup",
-    "faiss": "FAISS", "llama_index": "LlamaIndex", "google.generativeai": "Gemini API",
-    "sentence_transformers": "Hugging Face", "keras": "Keras", "xgboost": "XGBoost",
-    "gradio": "Gradio", "matplotlib": "matplotlib", "ollama": "Ollama",
-    "sqlite3": "SQLite", "tkinter": "Tkinter", "google.adk": "Google ADK",
-}
-
-# Package name (as written in requirements.txt / package.json) -> nice name
-PACKAGES = {
-    "fastapi": "FastAPI", "flask": "Flask", "django": "Django", "streamlit": "Streamlit",
-    "langchain": "LangChain", "langgraph": "LangGraph", "llama-index": "LlamaIndex",
-    "chromadb": "Chroma", "pinecone": "Pinecone", "pinecone-client": "Pinecone",
-    "faiss-cpu": "FAISS", "torch": "PyTorch", "tensorflow": "TensorFlow",
-    "transformers": "Hugging Face", "sentence-transformers": "Hugging Face",
-    "scikit-learn": "scikit-learn", "pandas": "pandas", "numpy": "NumPy",
-    "anthropic": "Claude API", "openai": "OpenAI SDK", "boto3": "AWS",
-    "redis": "Redis", "celery": "Celery", "sqlalchemy": "SQLAlchemy",
-    "psycopg2": "PostgreSQL", "psycopg2-binary": "PostgreSQL", "pymongo": "MongoDB",
-    "react": "React", "next": "Next.js", "vue": "Vue", "svelte": "Svelte",
-    "tailwindcss": "Tailwind", "express": "Express", "prisma": "Prisma",
-    "socket.io": "Socket.IO", "pytest": "pytest", "jest": "Jest",
-    "contree-sdk": "Nebius ConTree", "groq": "Groq", "ollama": "Ollama",
-    "google-generativeai": "Gemini API", "gradio": "Gradio", "httpx": "httpx",
-    "peft": "PEFT", "trl": "TRL", "vllm": "vLLM", "bitsandbytes": "bitsandbytes",
-    "google-adk": "Google ADK", "pydantic": "Pydantic", "uvicorn": "Uvicorn",
-    "selenium": "Selenium", "playwright": "Playwright", "scrapy": "Scrapy",
-    "stripe": "Stripe", "twilio": "Twilio", "supabase": "Supabase", "firebase-admin": "Firebase",
-    "mysql-connector-python": "MySQL", "pymysql": "MySQL", "opencv-python": "OpenCV",
-    "@prisma/client": "Prisma", "zod": "Zod", "vitest": "Vitest", "recharts": "Recharts",
-    "nodemailer": "Nodemailer", "next-auth": "NextAuth", "mongoose": "MongoDB",
-    "@supabase/supabase-js": "Supabase", "firebase": "Firebase", "three": "Three.js",
-    "@tanstack/react-query": "React Query", "redux": "Redux", "@reduxjs/toolkit": "Redux",
-    "react-native": "React Native", "expo": "Expo", "electron": "Electron",
-    "graphql": "GraphQL", "@apollo/client": "Apollo", "socket.io-client": "Socket.IO",
-    "@anthropic-ai/sdk": "Claude API", "ai": "Vercel AI SDK", "playwright-core": "Playwright",
-    "@playwright/test": "Playwright", "cypress": "Cypress", "vite": "Vite",
-}
-
 # Folders that support the project but aren't the product itself
 SIDE_DIRS = {
-    "test", "tests", "testing", "spec", "__tests__", "bench", "benchmark", "benchmarks",
+    "test", "tests", "testing", "spec", "__tests__", "__mocks__", "bench", "benchmark",
+    "benchmarks", "benches", "fuzz", "testdata", "e2e", "androidtest", "testfixtures",
+    "macrobenchmark", "microbenchmark", "integration_tests", "integration-tests",
     "example", "examples", "demo", "demos", "docs", "doc", "fixtures", "samples", "sample",
     "scripts", "vendor", "third_party", "migrations", "notebooks_old",
     "legacy", "old", "archive", "deprecated",   # old versions, not what the project is now
 }
-# Test files that live next to the code: test_x.py, x_test.go, x.test.ts, x.spec.js
-TEST_FILE = re.compile(r"^test_.+\.py$|_test\.(py|go)$|\.(test|spec)\.[jt]sx?$")
+# In src/main/java/com/acme/samples/..., the folders after "java" are a package name,
+# not side folders: "samples" there is the app itself (Spring and Android do this)
+SOURCE_ROOTS = {"java", "kotlin", "scala"}
+# Side files that live next to the code: test_x.py, x_test.go, x.test.ts, FooTest.java,
+# and SQL data dumps (data.sql, seed.sql) - long, and nothing about the design
+SIDE_FILE = re.compile(r"^test_.+\.py$|_test\.(py|go)$|\.(test|spec)\.[jt]sx?$"
+                       r"|Tests?\.(java|kt)$|(data|seed|dump|insert)\w*\.sql$"
+                       r"|^test_?(util|helper)s?\.\w+$", re.IGNORECASE)
+# Code written by a tool, not by the developer: never worth the model's attention
+GENERATED_NAME = re.compile(r"\.gen\.[jt]sx?$|_pb2(_grpc)?\.py$|\.pb\.go$|\.min\.js$|\.d\.ts$")
+GENERATED_HEADER = re.compile(r"auto-?generated|do not edit|@generated|generated by", re.IGNORECASE)
 # File names that are usually the heart of a project
 ENTRYPOINTS = {"main.py", "app.py", "cli.py", "__main__.py", "server.py", "manage.py",
                "index.js", "index.ts", "main.go", "main.rs", "App.jsx", "App.tsx",
-               "route.ts", "route.js", "middleware.ts"}      # Next.js API handlers
+               "route.ts", "route.js", "middleware.ts",      # Next.js API handlers
+               "MainActivity.kt", "MainActivity.java", "Program.cs"}
+# Spring Boot's main class is <Name>Application.java by convention
+ENTRY_FILE = re.compile(r"\w+Application\.(java|kt)$")
 # Buttons, cards, icons: imported by every page, but they say little about the product
 UI_KIT_DIRS = {"ui", "icons", "styles", "assets"}
+# Files that are there for the build tools, not for the reader
+LOW_VALUE_FILES = {"package-info.java", "module-info.java", "build.rs", "setup.py", "conftest.py"}
 
 MAX_TREE_LINES = 200     # paths listed in the file tree
 MAX_FILE_CHARS = 6000    # max characters read from one file (README, configs)
 MAX_CODE_CHARS = 2500    # per code file - the top (imports, docstring, main defs) says most
 MAX_TOTAL_CHARS = 70000  # whole scan, by default (llm.scan_budget picks a smaller one for Ollama)
+MAX_READ_BYTES = 2_000_000       # bigger "code" files are data or generated: skipped
+MAX_NOTEBOOK_BYTES = 20_000_000  # notebooks carry their outputs, so they get more room
+MIN_README_WORDS = 150   # with no code, a README shorter than this is too little to write about
 SUMMARY_CHARS = 4000     # part of that kept for one-line summaries of files that didn't fit
 
 
@@ -129,8 +108,10 @@ def get_repo(repo_arg, clone_dir=None):
         target = Path(clone_dir or tempfile.mkdtemp(prefix="proof_")) / repo_name(repo_arg)
         print(f"Cloning {repo_arg} ...")
         # blob:none = full history (for the commit stats) but only today's file contents
+        # GIT_LFS_SKIP_SMUDGE: big LFS files (models, datasets) aren't code; don't download them
         result = subprocess.run(["git", "clone", "--quiet", "--filter=blob:none",
-                                 repo_arg, str(target)], capture_output=True, text=True)
+                                 repo_arg, str(target)], capture_output=True, text=True,
+                                env={**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"})
         if result.returncode != 0:
             sys.exit(f"git clone failed:\n{result.stderr}")
         return target
@@ -152,15 +133,32 @@ def remote_head(url):
 # ---------------------------------------------------------------------------
 
 def list_files(repo):
-    """All files in the repo, skipping junk folders. Paths are relative to repo."""
-    files = []
-    for path in sorted(repo.rglob("*")):
-        relative = path.relative_to(repo)
-        if any(part in SKIP_DIRS for part in relative.parts):
-            continue
-        if path.is_file():
-            files.append(relative)
-    return files
+    """All files in the repo, as paths relative to it. In a git repo that's what git
+    tracks plus new files it doesn't ignore - so node_modules, build output and .env
+    files in .gitignore are never even walked through."""
+    names = git_files(repo)
+    if names is None:                       # not a git repo: walk the folder
+        names = walk_files(repo)
+    files = {Path(name) for name in names}
+    return sorted(f for f in files if not SKIP_DIRS & set(f.parts)
+                  and not SECRET_FILE.search(f.name) and (repo / f).is_file())
+
+
+def git_files(repo):
+    """File names from git, or None if `repo` isn't inside a git repo."""
+    result = subprocess.run(["git", "-C", str(repo), "ls-files", "-z", "--cached",
+                             "--others", "--exclude-standard"], capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    return [name for name in result.stdout.split("\0") if name]
+
+
+def walk_files(repo):
+    names = []
+    for folder, subfolders, filenames in os.walk(repo):
+        subfolders[:] = [d for d in subfolders if d not in SKIP_DIRS]   # don't go in at all
+        names += [os.path.relpath(os.path.join(folder, n), repo) for n in filenames]
+    return names
 
 
 def notebook_to_text(raw):
@@ -179,8 +177,12 @@ def notebook_to_text(raw):
 
 
 def read_text(path, limit=MAX_FILE_CHARS):
-    """Read a file as text, cut to `limit` characters. Returns '' for binary files."""
+    """Read a file as text, cut to `limit` characters. Returns '' for binary files
+    and for huge ones (data dumps, minified bundles)."""
+    max_bytes = MAX_NOTEBOOK_BYTES if path.suffix == ".ipynb" else MAX_READ_BYTES
     try:
+        if path.stat().st_size > max_bytes:
+            return ""
         text = path.read_text(encoding="utf-8")
     except (UnicodeDecodeError, OSError):
         return ""
@@ -212,106 +214,10 @@ def git_stats(repo):
     return f"{commits}, from {first[0] if first else '?'} to {last}."
 
 
-# ---------------------------------------------------------------------------
-# Stack detection (plain rules, no LLM)
-# ---------------------------------------------------------------------------
-
-def packages_in_requirements(text):
-    """'fastapi>=0.1  # web' -> 'fastapi'"""
-    names = []
-    for line in text.splitlines():
-        line = line.split("#")[0].strip()
-        if line and not line.startswith("-"):
-            names.append(re.split(r"[<>=!~\[; ]", line)[0].strip().lower())
-    return names
-
-
-def packages_in_pyproject(text):
-    """Runtime dependencies from pyproject.toml - NOT dev/test extras."""
-    try:
-        import tomllib                      # Python 3.11+
-        data = tomllib.loads(text)
-    except Exception:                       # older Python or broken file: rough fallback
-        text = text.lower()
-        return [p for p in PACKAGES if re.search(rf'["\s]{re.escape(p)}[\s"<>=~\[]', text)]
-
-    project = data.get("project", {})
-    deps = list(project.get("dependencies", []))
-    for group, items in project.get("optional-dependencies", {}).items():
-        if not re.search(r"dev|test|lint|doc|bench", group.lower()):
-            deps += items
-    deps += list(data.get("tool", {}).get("poetry", {}).get("dependencies", {}))
-    return packages_in_requirements("\n".join(deps))
-
-
-def packages_in_package_json(text):
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        return []
-    deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
-    return [name.lower() for name in deps]
-
-
-def packages_in_imports(code):
-    """Find top-level `import x` / `from x import y` in Python code, return nice names.
-    Indented imports (inside functions) are skipped: those are usually optional
-    integrations the project *supports*, not what it's built with."""
-    found = set()
-    for name in re.findall(r"^(?:from|import)\s+([A-Za-z_][\w.]*)", code, flags=re.MULTILINE):
-        top = name.split(".")[0]
-        dotted = [key for key in IMPORT_NAMES if "." in key and (name + ".").startswith(key + ".")]
-        if dotted:                                # google.generativeai, google.adk
-            found.add(IMPORT_NAMES[dotted[0]])
-        elif top.startswith("langchain"):         # langchain_openai, langchain_core ...
-            found.add("LangChain")
-        elif top in IMPORT_NAMES:
-            found.add(IMPORT_NAMES[top])
-        elif top.lower().replace("_", "-") in PACKAGES:
-            found.add(PACKAGES[top.lower().replace("_", "-")])
-    return found
-
-
 def detect_stack(repo, files=None):
-    """Guess the tech stack from file types, dependency files and Python imports."""
+    """The tech stack (see stack.py), not counting tests, examples and benchmarks."""
     files = files if files is not None else list_files(repo)
-    # Tests, benchmarks and examples often use other frameworks - don't count them
-    main_files = [f for f in files if not is_side_folder(f)]
-    if any(f.suffix in LANGUAGES for f in main_files):   # else: all code is in side folders
-        files = main_files
-    stack = set()
-
-    python_files = [f for f in files if f.suffix in (".py", ".ipynb")][:300]
-    for f in python_files:
-        stack |= packages_in_imports(read_text(repo / f, limit=200_000))
-
-    for f in files:
-        if f.suffix in LANGUAGES:
-            stack.add(LANGUAGES[f.suffix])
-        if f.suffix == ".ipynb":
-            stack.add("Python")
-
-        packages = []
-        if f.name == "requirements.txt":
-            packages = packages_in_requirements(read_text(repo / f, limit=100_000))
-        elif f.name == "package.json":
-            packages = packages_in_package_json(read_text(repo / f, limit=100_000))
-        elif f.name == "pyproject.toml":
-            packages = packages_in_pyproject(read_text(repo / f, limit=100_000))
-        for p in packages:
-            if p in PACKAGES:
-                stack.add(PACKAGES[p])
-
-        if f.name == "Dockerfile" or f.name.startswith("docker-compose"):
-            stack.add("Docker")
-        if f.name == "go.mod":
-            stack.add("Go")
-        if ".github" in f.parts and "workflows" in f.parts:
-            stack.add("GitHub Actions")
-        if f.suffix in (".yml", ".yaml") and "kind: Deployment" in read_text(repo / f):
-            stack.add("Kubernetes")
-
-    return sorted(stack)
+    return detect(repo, files, read_text, is_side_folder)
 
 
 # ---------------------------------------------------------------------------
@@ -320,45 +226,87 @@ def detect_stack(repo, files=None):
 
 def is_side_folder(f):
     """True for tests, benchmarks, examples, old versions ... - not the main product code.
-    Covers files in side folders (tests/, bench/) and test files next to the code."""
-    return side_folder_of(f) is not None or TEST_FILE.search(f.name) is not None
+    Covers files in side folders (tests/, bench/) and side files next to the code."""
+    return side_folder_of(f) is not None or SIDE_FILE.search(f.name) is not None
 
 
 def side_folder_of(f):
-    """'app/tests/unit/x.py' -> 'app/tests/'. None if f isn't inside a side folder."""
-    for i, part in enumerate(f.parts[:-1]):
-        if part.lower() in SIDE_DIRS:
+    """'app/tests/unit/x.py' -> 'app/tests/'. None if f isn't inside a side folder.
+    Hidden folders (.devcontainer/, .github/ISSUE_TEMPLATE/) count as side folders,
+    except .github/workflows/: CI is part of the work."""
+    folders = f.parts[:-1]
+    for i, part in enumerate(folders):
+        if part in SOURCE_ROOTS:
+            return None                       # the rest is a Java/Kotlin package name
+        is_workflows = part == ".github" and folders[i + 1:i + 2] == ("workflows",)
+        if part.lower() in SIDE_DIRS or (part.startswith(".") and not is_workflows):
             return "/".join(f.parts[:i + 1]) + "/"
     return None
 
 
-def code_priority(f):
-    """Lower number = read earlier."""
+def looks_generated(path):
+    """Written by a tool (API clients, protobuf, minified bundles), not by the developer."""
+    if GENERATED_NAME.search(path.name):
+        return True
+    return GENERATED_HEADER.search(read_text(path, limit=600)) is not None
+
+
+def code_priority(f, languages=None):
+    """Lower number = read earlier. `languages`: the project's main languages; a file in
+    another one (ripgrep's Homebrew formula in Ruby) is a side detail."""
     if is_side_folder(f):
         return 4                                  # tests, benchmarks, examples: last
-    if f.suffix in SCHEMA_EXTENSIONS or f.name in ENTRYPOINTS:
-        return 0                                  # the data model, cli.py, main.py ...
-    if f.suffix in (".yml", ".yaml") or UI_KIT_DIRS & set(f.parts[:-1]):
-        return 3                                  # config, CI and UI kit, after real code
+    if f.suffix in SCHEMA_EXTENSIONS or f.name in ENTRYPOINTS or ENTRY_FILE.fullmatch(f.name):
+        return 0                                  # the data model, cli.py, main.go ...
+    minor_language = languages and f.suffix in LANGUAGES and LANGUAGES[f.suffix] not in languages
+    if (f.suffix in (".yml", ".yaml") or CONFIG_FILE.search(f.name) or minor_language
+            or f.name in LOW_VALUE_FILES or UI_KIT_DIRS & set(f.parts[:-1])):
+        return 3                                  # config, CI, UI kit ...: after real code
     if f.parts[0] == "src":
         return 1
     return 2
 
 
-def pick_files_to_read(files, importers=None):
+def pick_files_to_read(files, importers=None, skip=(), languages=None):
     """README, dependency files, then code in order of importance: entrypoints and schemas,
     then the modules most other files import (the core), then config, then tests.
-    `importers`: {path: how many of the project's files import it}."""
+    `importers`: {path or "folder/": how many of the project's files import it}.
+    `skip`: files never worth reading (generated code). `languages`: main languages."""
     importers = importers or {}
-    readme = [f for f in files if f.name.lower().startswith("readme")][:1]
+    readmes = [f for f in files if f.name.lower().startswith("readme")]
+    readme = sorted(readmes, key=lambda f: len(f.parts))[:1]          # the top-level one
     important = [f for f in files if f.name in IMPORTANT_FILES
                  and len(f.parts) <= 2 and not is_side_folder(f)]   # root, or backend/...
 
-    already = set(readme + important)
+    already = set(readme + important) | set(skip)
     code = [f for f in files if f.suffix in CODE_EXTENSIONS and f not in already]
-    code.sort(key=lambda f: (code_priority(f), -importers.get(f.as_posix(), 0),
+    code.sort(key=lambda f: (code_priority(f, languages), -import_count(f, importers),
                              len(f.parts), f.name))
-    return readme + important + code
+    return readme + important + first_copies_first(code)
+
+
+def import_count(f, importers):
+    """How many files import f - directly, or through its folder (a Go package)."""
+    return importers.get(f.as_posix(), 0) + importers.get(f.parent.as_posix() + "/", 0)
+
+
+def first_copies_first(files):
+    """A second file with the same name (notebooks_v1/x.ipynb, db/mysql/schema.sql) is
+    usually a copy or a variant: read it only after everything else."""
+    seen, firsts, repeats = set(), [], []
+    for f in files:
+        (repeats if f.name in seen and f.name not in ENTRYPOINTS else firsts).append(f)
+        seen.add(f.name)
+    return firsts + repeats
+
+
+def has_enough_to_write_about(repo, files):
+    """A case study needs some code, or at least a real README. With neither, the model
+    could only make things up."""
+    has_code = any(f.suffix in LANGUAGES or f.suffix in SCHEMA_EXTENSIONS for f in files)
+    readmes = [f for f in files if f.name.lower().startswith("readme")]
+    readme_words = sum(len(read_text(repo / f, limit=100_000).split()) for f in readmes)
+    return has_code or readme_words >= MIN_README_WORDS
 
 
 def summarise_tree(files):
@@ -378,10 +326,10 @@ def summarise_tree(files):
 
 
 def scan_repo(repo, budget=MAX_TOTAL_CHARS):
-    """Build one text summary of the repo for the LLM, at most `budget` characters
-    (plus a short list of files that didn't fit)."""
+    """Build one text summary of the repo for the LLM, at most `budget` characters."""
     files = list_files(repo)
     main_files = [f for f in files if not is_side_folder(f)]
+    generated = {f for f in main_files if f.suffix in CODE_EXTENSIONS and looks_generated(repo / f)}
     edges = internal_imports(repo, main_files, read_text)
     importers = {}
     for _, target in edges:
@@ -399,7 +347,8 @@ def scan_repo(repo, budget=MAX_TOTAL_CHARS):
 
     used = sum(len(part) for part in parts)
     not_read = []
-    for f in pick_files_to_read(files, importers):
+    languages = main_languages(main_files)
+    for f in pick_files_to_read(files, importers, skip=generated, languages=languages):
         is_code = f.suffix in LANGUAGES or f.suffix == ".h"   # configs and schemas get more room
         if f.name.lower().startswith("readme") and len(f.parts) == 1:
             text = readme_extract(read_text(repo / f, limit=1_000_000))

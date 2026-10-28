@@ -1,29 +1,37 @@
 """
 match.py - which of your projects best fits a job post? (no LLM, fully explainable)
 
-Score = 3 points per shared tech term (e.g. "fastapi", "docker", "rag")
+Score = 3 points per shared tech term (e.g. "fastapi", "spring boot", "rag")
+      + 1 point per shared everyday tool ("docker", "github actions", "pytest")
       + 0.5 points per other shared meaningful word.
 """
 
 import re
 
-from .scan import LANGUAGES, PACKAGES
+from .stack import ALL_NAMES, PACKAGES
 
 # Tech words worth extra points. Multi-word terms are fine ("github actions").
 EXTRA_TECH = {
     "aws", "gcp", "azure", "docker", "kubernetes", "k8s", "terraform", "ansible",
-    "ci/cd", "github actions", "jenkins", "linux", "nginx", "rag", "llm", "llms",
-    "agent", "agents", "chatbot", "embeddings", "vector database", "rest api",
+    "ci/cd", "github actions", "jenkins", "linux", "nginx", "rag", "llm",
+    "agent", "chatbot", "embeddings", "vector database", "rest api",
     "graphql", "websocket", "microservices", "machine learning", "deep learning",
     "nlp", "computer vision", "fine-tuning", "prompt engineering", "arduino",
     "iot", "embedded", "postgres", "mysql", "sqlite", "supabase", "firebase",
     "webhook", "payments", "saas", "multi-tenant", "role-based access", "rbac", "oauth", "jwt",
     "vercel", "netlify", "heroku", "unit tests", "automated tests", "e2e", "lora", "qlora",
 }
-TECH_TERMS = {t.lower() for t in list(PACKAGES) + list(PACKAGES.values())
-              + list(LANGUAGES.values())} | EXTRA_TECH
-TECH_TERMS -= {"c", "next", "express", "go", "three", "ai"}   # also plain English words
+TECH_TERMS = {t.lower() for t in list(PACKAGES) + list(ALL_NAMES)} | EXTRA_TECH
+# Also plain English words ("go", "click here", "a rich UI"). Still matched when written
+# with a capital, the way stack lists and job posts name them: "Room", "Hilt", "Go".
+CASE_SENSITIVE = {"Go", "Room", "Hilt", "Click", "Rich", "Echo", "Fiber", "Rocket", "Expo",
+                  "Rayon", "Glamour"}
+TECH_TERMS -= {"c", "next", "express", "three", "ai", "chi", "regex"}
+TECH_TERMS -= {t.lower() for t in CASE_SENSITIVE}
 TECH_TERMS |= {"golang", "next.js", "express.js"}
+# Tools nearly every project has: weak evidence that this project fits this job
+COMMON_TOOLS = {"docker", "github actions", "git", "pytest", "jest", "junit", "vitest", "linux",
+                "ci/cd", "sql", "unit tests", "automated tests", "gradle", "maven"}
 
 STOPWORDS = set("""a an the and or but if of to in on for with by from at as is are was were be
 been this that these those it its you your we our they their i me my will would can could should
@@ -47,10 +55,10 @@ def words(text):
 
 def score_project(job, project_text):
     """Return (score, shared_tech_terms) for one project against the job."""
-    job_l, proj_l = job.lower(), project_text.lower()
-    tech = sorted(t for t in TECH_TERMS if has_term(job_l, t) and has_term(proj_l, t))
-    other = (words(job_l) & words(proj_l)) - set(tech)
-    return 3 * len(tech) + 0.5 * len(other), tech
+    tech = sorted(tech_in(job) & tech_in(project_text))
+    other = (words(job) & words(project_text)) - {t.lower() for t in tech}
+    points = sum(1 if term in COMMON_TOOLS else 3 for term in tech)
+    return points + 0.5 * len(other), tech
 
 
 def rank_projects(job, projects):
@@ -63,6 +71,7 @@ def rank_projects(job, projects):
 
 
 def tech_in(text):
-    """All tech terms mentioned in a text (used by the linter)."""
-    text = text.lower()
-    return {t for t in TECH_TERMS if has_term(text, t)}
+    """All tech terms mentioned in a text (also used by the linter)."""
+    lower = text.lower()
+    found = {t for t in TECH_TERMS if has_term(lower, t)}
+    return found | {t for t in CASE_SENSITIVE if re.search(rf"\b{t}\b", text)}

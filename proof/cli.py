@@ -30,12 +30,13 @@ from pathlib import Path
 from .facts import fingerprint, read_facts, start_facts_file
 from .jobpost import read_job
 from .lint import check_case_study, lint_pitch, print_problems, unsupported_numbers
-from .llm import DEFAULT_MODELS, ask_llm, drop_preamble, fix_mermaid, scan_budget, strip_wrapper
+from .llm import (DEFAULT_MODELS, ask_llm, drop_preamble, fix_mermaid, scan_budget,
+                  strip_wrapper)
 from .match import rank_projects
 from .portfolio import build_site, load_case_studies
 from .prompts import CASE_STUDY, PITCH, PROFILE
-from .scan import (detect_stack, get_repo, head_commit, is_url, list_files, remote_head,
-                   repo_name, scan_repo)
+from .scan import (detect_stack, get_repo, has_enough_to_write_about, head_commit, is_url,
+                   list_files, remote_head, repo_name, scan_repo)
 from .tracker import STATUSES, load_log, record_pitch, report, update_status
 
 
@@ -65,6 +66,10 @@ def write_case_study(repo_arg, clone_dir, args):
             return
 
     repo = get_repo(repo_arg, clone_dir)
+    if not args.force and not has_enough_to_write_about(repo, list_files(repo)):
+        print(f"[{name}] skipped: no code and no real README, so the model could only make "
+              f"things up. Push some code (or use --force).")
+        return
     print(f"[{name}] scanning ...")
     repo_scan = scan_repo(repo, budget=scan_budget(args.provider))
     prompt = CASE_STUDY.format(repo_scan=repo_scan, facts=facts or "(none given)")
@@ -153,9 +158,11 @@ def cmd_pitch(args):
     print("Project match for this job:")
     for p in ranked:
         print(f"  {p['score']:5.1f}  {p['name']:<28} {', '.join(p['matched']) or '-'}")
-    # Only projects that share real tech with the job are evidence; a shared
-    # everyday word or two isn't. If none do, use the best one anyway.
-    chosen = [p for p in ranked if p["matched"]][:args.top]
+    # Evidence = projects that share real tech with the job and score at least half as
+    # well as the best one (Docker alone doesn't make a project relevant).
+    # If none share any tech, use the best one anyway.
+    best = ranked[0]["score"]
+    chosen = [p for p in ranked if p["matched"] and p["score"] >= best / 2][:args.top]
     if not chosen:
         print("  (no shared tech - this job may not suit your current projects)")
         chosen = ranked[:1]
@@ -195,6 +202,10 @@ def cmd_profile(args):
         projects = [p for p in projects if p["slug"] in args.only or p["name"] in args.only]
         if not projects:
             sys.exit(f"No case studies called {', '.join(args.only)} in {args.out}.")
+    projects, left_out = fit_to_budget(projects, scan_budget(args.provider))
+    if left_out:
+        print(f"Left out (they don't fit the model's context): {', '.join(left_out)}. "
+              f"Pick projects with --only to choose.")
     case_studies = "\n\n".join(project_block(p) for p in projects)
     print(f"Writing profile from: {', '.join(p['name'] for p in projects)} ...")
     profile = strip_wrapper(ask_llm(PROFILE.format(case_studies=case_studies),
@@ -213,6 +224,20 @@ def cmd_profile(args):
         problems.append(("WARN", f"Numbers not in your case studies: {', '.join(numbers)}. "
                                  "Make sure they're true."))
     print_problems(problems, ok_message="Check: no placeholders or unsupported numbers.")
+
+
+def fit_to_budget(projects, budget):
+    """As many projects as fit in `budget` characters, the most complete ones (fewest
+    [add: ...] gaps) first. Returns (kept, names of the ones left out)."""
+    kept, left_out, used = [], [], 0
+    for p in sorted(projects, key=lambda p: p["placeholders"]):
+        size = len(project_block(p))
+        if used + size > budget and kept:
+            left_out.append(p["name"])
+            continue
+        kept.append(p)
+        used += size
+    return kept, left_out
 
 
 # ---------------------------------------------------------------------------

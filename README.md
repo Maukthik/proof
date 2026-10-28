@@ -17,6 +17,10 @@ your repos ──case──▶ case studies ──pitch──▶ pitch for a job
                              └──site─────▶ portfolio page (GitHub Pages)
 ```
 
+Works with Python (incl. notebooks), JavaScript/TypeScript (React, Next.js, Node), Go, Rust,
+Java/Kotlin (Spring, Android), plus Ruby and PHP dependency files. Tested on 19 real repos,
+from a 1-file repo to 5,500-commit projects.
+
 It never invents results. Missing facts become `[add: ...]` gaps, and every number in
 generated text is checked against your repo and your own notes.
 
@@ -90,6 +94,16 @@ proof_output/
   site/index.html           upload to GitHub Pages / Netlify
 ```
 
+## What the model gets to see
+
+`proof` reads what git tracks (so `.gitignore`d folders, build output and `.env` files are
+never looked at; secret files are skipped even outside git). Then it picks files in order of
+importance: README and dependency files, entry points and data schemas, then the modules most
+other files import. Tests, examples, benchmarks, generated code, config files and copies come
+last. The amount is sized to the model: about 35K characters for Ollama's default context,
+70K for cloud models. Repos with no code and no real README are skipped: there's nothing true
+to write. To see exactly what a model would get: `proof case <repo> --dry-run`.
+
 ## How it keeps things true
 
 - The model is told to use only numbers from the repo scan and your `facts.md`. Anything else
@@ -117,7 +131,8 @@ so a quiet day costs no LLM calls.
 | File | Job |
 |---|---|
 | `proof/cli.py` | Command line: `case`, `pitch`, `lint`, `profile`, `site`, `log` |
-| `proof/scan.py` | Reads a repo (incl. notebooks), picks what the LLM sees, detects the stack |
+| `proof/scan.py` | Reads a repo (incl. notebooks) and picks what the LLM sees |
+| `proof/stack.py` | Detects the stack from dependency files, imports and languages |
 | `proof/codemap.py` | Which files import which: the skeleton of the architecture diagram |
 | `proof/prompts.py` | The instructions sent to the LLM. Edit these to change the writing style |
 | `proof/llm.py` | Talks to Anthropic / Ollama / OpenAI-compatible APIs / mock; tidies replies |
@@ -128,6 +143,7 @@ so a quiet day costs no LLM calls.
 | `proof/tracker.py` | The pitch log |
 | `proof/portfolio.py` | Builds the portfolio page |
 | `templates/` | GitHub Actions (see above) |
+| `tools/survey.py` | Dev check: what the model would see, across many repos |
 | `examples/` | Real output for two projects: case studies, a pitch, a profile, the page |
 
 ## Tests

@@ -685,3 +685,193 @@ def test_api_routes_before_ui_kit(tmp_path):
     text = scan_repo(make_repo(tmp_path, "web", files))
     assert (text.index("# File: src/app/api/webhooks/stripe/route.ts")
             < text.index("# File: src/components/ui/button.tsx"))
+
+
+# ---------------------------------------------------------------------------
+# Other stacks and repo shapes (found by scanning 19 real repos)
+# ---------------------------------------------------------------------------
+
+def test_spring_project_under_samples_package(tmp_path):
+    base = "src/main/java/org/acme/samples/clinic"
+    repo = make_repo(tmp_path, "clinic", {
+        "pom.xml": "<artifactId>spring-boot-starter-data-jpa</artifactId><artifactId>thymeleaf"
+                   "</artifactId><artifactId>postgresql</artifactId>",
+        f"{base}/ClinicApplication.java": "package x;\nclass ClinicApplication {}",
+        f"{base}/owner/Owner.java": "package x;\nimport org.acme.samples.clinic.model.Person;\n"
+                                    "class Owner extends Person { Pet pet; }",
+        f"{base}/owner/Pet.java": "class Pet {}",
+        f"{base}/model/Person.java": "class Person {}",
+        f"{base}/package-info.java": "package x;",
+        "src/test/java/org/acme/samples/clinic/OwnerTests.java": "class OwnerTests {}",
+        "src/main/resources/db/data.sql": "INSERT INTO owners VALUES (1);",
+        "src/main/resources/db/schema.sql": "CREATE TABLE owners (id int);",
+    })
+    expected = {"Java", "Spring Boot", "JPA / Hibernate", "Thymeleaf", "PostgreSQL", "Maven"}
+    assert expected <= set(detect_stack(repo))
+    text = scan_repo(repo)
+    read = [line[8:] for line in text.splitlines() if line.startswith("# File: ")]
+    assert read.index(f"{base}/ClinicApplication.java") < read.index(f"{base}/model/Person.java")
+    assert read.index(f"{base}/model/Person.java") < read.index(f"{base}/package-info.java")
+    db = "src/main/resources/db/"
+    assert read.index(db + "schema.sql") < read.index(db + "data.sql")
+    assert "(all paths are under src/main/java/org/acme/samples/clinic/)" in text
+    assert "owner/Owner.java -> model/Person.java, owner/Pet.java" in text   # same-package use
+
+
+def test_android_stack_from_version_catalog(tmp_path):
+    repo = make_repo(tmp_path, "garden", {
+        "gradle/libs.versions.toml": 'compose = { module = "androidx.compose.ui:ui" }\n'
+                                     'room = { module = "androidx.room:room-runtime" }\n'
+                                     'hilt = { module = "com.google.dagger:hilt-android" }\n',
+        "app/src/main/java/com/acme/garden/MainActivity.kt": "class MainActivity",
+        "macrobenchmark/src/main/java/com/acme/Bench.kt": "class Bench",
+        ".github/ISSUE_TEMPLATE/bug.yml": "name: bug",
+        ".github/workflows/android.yml": "on: push",
+    })
+    assert {"Kotlin", "Jetpack Compose", "Room", "Hilt", "Gradle"} <= set(detect_stack(repo))
+    text = scan_repo(repo)
+    assert "macrobenchmark/  (1 files, not main code)" in text
+    assert ".github/  (1 files, not main code)" in text                  # issue templates
+    assert ".github/workflows/android.yml\n" in text                      # CI stays visible
+
+
+def test_go_project(tmp_path):
+    repo = make_repo(tmp_path, "glowish", {
+        "go.mod": "module github.com/acme/glowish\n\nrequire (\n"
+                  "\tgithub.com/spf13/cobra v1.8.0\n"
+                  "\tgithub.com/charmbracelet/bubbletea v1.0.0\n)\n",
+        "main.go": 'package main\n\nimport (\n\t"fmt"\n\t"github.com/acme/glowish/ui"\n'
+                   '\tu "github.com/acme/glowish/utils"\n)\n',
+        "ui/ui.go": 'package ui\n\nimport "github.com/acme/glowish/utils"\n',
+        "ui/pager.go": "package ui\n",
+        "utils/utils.go": "package utils\n",
+        "utils/utils_test.go": "package utils\n",
+    })
+    assert {"Go", "Cobra", "Bubble Tea"} <= set(detect_stack(repo))
+    text = scan_repo(repo)
+    assert "main.go -> ui/, utils/" in text and "ui/ui.go -> utils/" in text
+    assert text.index("# File: utils/utils.go") < text.index("# File: ui/pager.go")  # imported most
+
+
+def test_rust_workspace(tmp_path):
+    repo = make_repo(tmp_path, "rg", {
+        "Cargo.toml": '[package]\nname = "rg"\n[dependencies]\nserde = "1"\n'
+                      'grep = { path = "crates/grep" }\n',
+        "crates/core/main.rs": "mod flags;\nuse grep::Searcher;\nfn main() {}\n",
+        "crates/core/flags/mod.rs": "use crate::search;\n",
+        "crates/core/search.rs": "pub fn search() {}",
+        "crates/grep/Cargo.toml": '[package]\nname = "grep"\n',
+        "crates/grep/src/lib.rs": "pub struct Searcher;",
+        "pkg/brew/rg.rb": "class Rg < Formula\nend\n",
+        "fuzz/fuzz_targets/glob.rs": "fn fuzz() {}",
+        **{f"crates/grep/src/part{i}.rs": "" for i in range(10)},   # Rust is >90% of the code
+    })
+    stack = detect_stack(repo)
+    assert {"Rust", "Serde"} <= set(stack) and "Ruby" not in stack       # 1 formula file
+    text = scan_repo(repo)
+    assert "crates/core/main.rs -> crates/core/flags/mod.rs, crates/grep/src/lib.rs" in text
+    assert "crates/core/flags/mod.rs -> crates/core/search.rs" in text
+    assert text.index("# File: crates/core/search.rs") < text.index("# File: pkg/brew/rg.rb")
+    assert "fuzz/  (1 files, not main code)" in text
+
+
+def test_generated_and_config_files_are_read_last(tmp_path):
+    repo = make_repo(tmp_path, "web", {
+        "package.json": json.dumps({"dependencies": {"next": "14"}}),
+        "tsconfig.json": "{}",
+        "app/page.tsx": 'import { db } from "@/lib/db";\n'
+                        'import { api } from "@/client/sdk.gen";\n',
+        "lib/db.ts": "export const db = 1\n",
+        "client/sdk.gen.ts": "// This file is auto-generated by openapi-ts\nexport const api = 1\n",
+        "client/types.ts": "// Code generated by a tool. DO NOT EDIT.\nexport type T = 1\n",
+        "tailwind.config.js": "module.exports = {}\n",
+        "notebooks/a.ipynb": "{}",
+    })
+    text = scan_repo(repo)
+    assert "app/page.tsx -> client/sdk.gen.ts, lib/db.ts" in text        # "@/" = package root
+    assert "# File: client/sdk.gen.ts" not in text and "# File: client/types.ts" not in text
+    assert text.index("# File: lib/db.ts") < text.index("# File: tailwind.config.js")
+    assert "JavaScript" not in detect_stack(repo)                       # just a config file
+
+
+def test_second_copies_are_read_last():
+    from proof.scan import first_copies_first
+    files = [Path(p) for p in ["notebooks/a.ipynb", "notebooks_v1/a.ipynb", "notebooks/b.ipynb",
+                               "api/route.ts", "web/route.ts"]]
+    order = [f.as_posix() for f in first_copies_first(files)]
+    assert order == ["notebooks/a.ipynb", "notebooks/b.ipynb", "api/route.ts", "web/route.ts",
+                     "notebooks_v1/a.ipynb"]
+
+
+def test_files_follow_gitignore_and_secrets_never_listed(tmp_path):
+    from proof.scan import list_files
+    repo = make_repo(tmp_path, "app", {"main.py": "x = 1\n", ".gitignore": "data/\n",
+                                       ".env.example": "KEY=\n"})
+    (repo / "data").mkdir()
+    (repo / "data" / "big.csv").write_text("1,2")
+    (repo / "new.py").write_text("y = 2\n")                   # untracked but not ignored
+    (repo / ".env").write_text("KEY=secret")
+    (repo / "server.pem").write_text("-----BEGIN")
+    names = {f.as_posix() for f in list_files(repo)}
+    assert names == {".gitignore", ".env.example", "main.py", "new.py"}
+
+    plain = tmp_path / "plain"                                # not a git repo: walk it
+    (plain / "node_modules" / "x").mkdir(parents=True)
+    (plain / "node_modules" / "x" / "i.js").write_text("")
+    (plain / "app.py").write_text("")
+    (plain / ".env").write_text("KEY=secret")
+    assert [f.as_posix() for f in list_files(plain)] == ["app.py"]
+
+
+def test_huge_files_are_not_read(tmp_path):
+    from proof.scan import MAX_READ_BYTES, read_text
+    (tmp_path / "dump.py").write_text("x" * (MAX_READ_BYTES + 1))
+    assert read_text(tmp_path / "dump.py") == ""
+
+
+def test_repo_with_nothing_to_write_about_is_skipped(tmp_path):
+    empty = make_repo(tmp_path, "hello", {"README.md": "# hello\n", "notes.txt": "hi"})
+    code, out = run("case", str(empty), "--provider", "mock", cwd=tmp_path)
+    assert code == 0 and "skipped: no code" in out
+    assert not (tmp_path / "proof_output" / "hello" / "case_study.md").exists()
+    readme_only = make_repo(tmp_path, "essay", {"README.md": "word " * 200})
+    code, out = run("case", str(readme_only), "--provider", "mock", cwd=tmp_path)
+    assert "saved" in out
+
+
+def test_matching_case_sensitive_terms_and_weak_tools():
+    from proof.match import tech_in
+    assert {"Room", "Hilt", "Go"} <= tech_in("Kotlin app with Room and Hilt, backend in Go")
+    assert not {"Room", "Go", "Rich"} & tech_in("room to grow, rich features, let's go")
+    ranked = rank_projects("Go CLI with Cobra, Docker and GitHub Actions",
+                           [{"name": "cli", "text": "Go Cobra Docker"},
+                            {"name": "web", "text": "Docker GitHub Actions React"}])
+    assert ranked[0]["name"] == "cli" and ranked[1]["score"] < ranked[0]["score"] / 2
+
+
+def test_pitch_uses_only_strong_second_projects(repos, tmp_path):
+    run("case", str(repos["rag"]), str(repos["shop"]), "--provider", "mock", cwd=tmp_path)
+    (tmp_path / "job.txt").write_text("FastAPI LangChain RAG bot with Docker and a React page")
+    code, out = run("pitch", "job.txt", "--provider", "mock", cwd=tmp_path)
+    assert "Writing pitch using: rag-bot ..." in out          # shop-ui only shares React
+
+
+def test_framework_internals_not_listed(tmp_path):
+    repo = make_repo(tmp_path, "api", {"requirements.txt": "flask==3.0\nwerkzeug==3.0\n"
+                                                           "jinja2==3.1\nclick==8.1\n",
+                                       "app.py": "from flask import Flask\n"})
+    assert detect_stack(repo) == ["Flask", "Python"]
+
+
+def test_profile_fits_the_context(tmp_path):
+    for i in range(20):                         # 20 long case studies: ~120K characters
+        folder = tmp_path / "proof_output" / f"p{i:02}"
+        folder.mkdir(parents=True)
+        gaps = "[add: users]" if i % 2 else ""
+        (folder / "case_study.md").write_text(f"# p{i:02} - a project\n{gaps}\n" + "word " * 1200)
+    code, out = run("profile", "--provider", "mock", cwd=tmp_path)
+    assert code == 0 and "Left out" in out
+    used = out.split("Writing profile from: ")[1].split(" ...")[0].split(", ")
+    left_out = out.split("Left out (they don't fit the model's context): ")[1].split(".")[0]
+    assert all(f"p{i:02}" in used for i in range(0, 20, 2))   # complete ones go first
+    assert all(int(name[1:]) % 2 for name in left_out.split(", "))
