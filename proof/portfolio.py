@@ -23,7 +23,7 @@ def load_case_studies(out_dir):
     for md_file in sorted(Path(out_dir).glob("*/case_study.md")):
         folder = md_file.parent
         meta_file = folder / "meta.json"
-        meta = json.loads(meta_file.read_text()) if meta_file.exists() else {}
+        meta = json.loads(meta_file.read_text(encoding="utf-8")) if meta_file.exists() else {}
         text = md_file.read_text(encoding="utf-8")
 
         title_line = re.search(r"^# (.+)$", text, flags=re.MULTILINE)

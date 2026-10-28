@@ -875,3 +875,9 @@ def test_profile_fits_the_context(tmp_path):
     left_out = out.split("Left out (they don't fit the model's context): ")[1].split(".")[0]
     assert all(f"p{i:02}" in used for i in range(0, 20, 2))   # complete ones go first
     assert all(int(name[1:]) % 2 for name in left_out.split(", "))
+
+
+def test_non_ascii_file_names(tmp_path):
+    from proof.scan import list_files
+    repo = make_repo(tmp_path, "intl", {"résumé.py": "x = 1\n", "main.py": "import json\n"})
+    assert {f.name for f in list_files(repo)} == {"résumé.py", "main.py"}

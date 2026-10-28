@@ -76,6 +76,10 @@ UI_KIT_DIRS = {"ui", "icons", "styles", "assets"}
 # Files that are there for the build tools, not for the reader
 LOW_VALUE_FILES = {"package-info.java", "module-info.java", "build.rs", "setup.py", "conftest.py"}
 
+# git prints file names in UTF-8. Without saying so, Windows decodes them as cp1252 and
+# a name like "résumé.py" garbles or crashes the scan.
+GIT_TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
+
 MAX_TREE_LINES = 200     # paths listed in the file tree
 MAX_FILE_CHARS = 6000    # max characters read from one file (README, configs)
 MAX_CODE_CHARS = 2500    # per code file - the top (imports, docstring, main defs) says most
@@ -110,7 +114,7 @@ def get_repo(repo_arg, clone_dir=None):
         # blob:none = full history (for the commit stats) but only today's file contents
         # GIT_LFS_SKIP_SMUDGE: big LFS files (models, datasets) aren't code; don't download them
         result = subprocess.run(["git", "clone", "--quiet", "--filter=blob:none",
-                                 repo_arg, str(target)], capture_output=True, text=True,
+                                 repo_arg, str(target)], capture_output=True, **GIT_TEXT,
                                 env={**os.environ, "GIT_LFS_SKIP_SMUDGE": "1"})
         if result.returncode != 0:
             sys.exit(f"git clone failed:\n{result.stderr}")
@@ -124,7 +128,7 @@ def get_repo(repo_arg, clone_dir=None):
 
 def remote_head(url):
     """Latest commit of a remote repo, without cloning it ('' if we can't tell)."""
-    result = subprocess.run(["git", "ls-remote", url, "HEAD"], capture_output=True, text=True)
+    result = subprocess.run(["git", "ls-remote", url, "HEAD"], capture_output=True, **GIT_TEXT)
     return result.stdout.split()[0] if result.returncode == 0 and result.stdout else ""
 
 
@@ -147,7 +151,7 @@ def list_files(repo):
 def git_files(repo):
     """File names from git, or None if `repo` isn't inside a git repo."""
     result = subprocess.run(["git", "-C", str(repo), "ls-files", "-z", "--cached",
-                             "--others", "--exclude-standard"], capture_output=True, text=True)
+                             "--others", "--exclude-standard"], capture_output=True, **GIT_TEXT)
     if result.returncode != 0:
         return None
     return [name for name in result.stdout.split("\0") if name]
@@ -195,7 +199,7 @@ def read_text(path, limit=MAX_FILE_CHARS):
 
 def git(repo, *args):
     """Run a git command in the repo, return its output ('' if it fails)."""
-    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
+    result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, **GIT_TEXT)
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
