@@ -1,8 +1,9 @@
 # proof — project notes for Claude
 
 ## What this is
-A CLI that turns a developer's GitHub repos into proof of skill: client-facing case studies,
-job-matched pitches, and a portfolio page. Built by Maukthik J (second-year engineering student) to
+A CLI that helps a developer run their projects (status across all repos, task lists handed
+to a coding agent and checked, new projects from an idea) and turns those repos into proof of
+skill: client-facing case studies, job-matched pitches, and a portfolio page. Built by Maukthik J (second-year engineering student) to
 win freelance work first, then to sell to other students/freelancers with the same problem.
 
 Core problem it solves: good projects don't turn into evidence a client trusts, and every
@@ -11,7 +12,19 @@ application/proposal gets rewritten from scratch.
 ## Layout
 Everything is in the `proof/` package (installed as the `proof` command via `pyproject.toml`).
 - `proof/cli.py`: CLI with `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `apply`,
-  `followup`, `prep`, `doctor`, `suggest`, `eval`, `dataset`
+  `followup`, `prep`, `status`, `task`, `new`, `doctor`, `suggest`, `eval`, `dataset`
+- `proof/projects.py`: projects.txt (folders `proof status` watches), find_repos, uncommitted (ignores
+  build junk), test_command/check_commands (from files, never a model; project .venv first)
+- `proof/status.py`: `proof status`: local git state + GitHub (github.py) + tasks + checklist ->
+  table and "Needs you". GitHub errors are said once, then GitHub is skipped for the run
+- `proof/tasks.py`: per-project tasks.json; import from CI/issues/suggest/checklist/TODOs; brief()
+  for coding agents (related_files: name match x2 + git grep; own repo name ignored); start (clean
+  tree, task/<n>-slug branch, base_commit), check (diff since base, deleted tests, run checks,
+  failure_summary with install hints), done. Agents: claude, codex, aider. proof never merges
+- `proof/newproject.py`: `proof new`: plan (prompts.NEW_PROJECT: known stack + client asks) ->
+  starter repo (python/node/plain: README with Results, tests, CI, MIT, PLAN.md), first commit,
+  plan's first tasks, added to projects.txt
+- `proof/github.py`: gh_get (GITHUB_TOKEN / GH_TOKEN, GITHUB_API_URL), GitHubError
 - `proof/casestudy.py`: one case study: draft -> lint checks -> one repair round (prompts.REVISE) -> source links
 - `proof/claims.py`: links each Results line to the README line stating the same numbers the same way
 - `proof/diagram.py`: arrows between real files must be backed by an import (else dashed); boxes get click links
@@ -111,6 +124,11 @@ Pitch -> call loop (2026-10-28): `proof apply` (boards -> fits -> drafts), `proo
 `proof prep`; every pitch now saves its job post as `pitches/<name>.job.txt`. Their output goes
 through lint_followup / lint_prep (numbers, flips, unknown files, "just checking in", repeats).
 
+Project management (2026-10-28): `proof status`, `proof task`, `proof new`. Tested on Mauk's 10
+real repos (local; the sandbox's proxy blocks api.github.com, so GitHub was tested against a fake
+API) and a real doppel task: .venv picked up, full suite run, marked done. NEW_PROJECT prompt not
+yet run on a real model.
+
 ## Next gaps to close (in priority order)
 0. Use `proof eval` for every prompt change: run it before and after, keep only improvements.
 1. Keep tuning `prompts.py` on Mauk's real repos with a real model (`proof case ... --force`). Save each
@@ -119,8 +137,10 @@ through lint_followup / lint_prep (numbers, flips, unknown files, "just checking
 2. Try the templates for real: a `portfolio` repo with repos.txt, Pages on, one ping from doppel.
 3. Run the fine-tuning loop for real (training/README.md): teacher data on Groq/Anthropic,
    Kaggle training, then `proof eval` old vs fine-tuned. Fix train_lora.py if Unsloth/TRL renamed things.
-4. Get `proof doctor` output from Mauk's laptop, then run `proof apply` against the LIVE boards (the sandbox couldn't reach them):
+4. On Mauk's laptop: `proof status D:\MyAIProjects` with GITHUB_TOKEN (first real GitHub run),
+   one real `proof task start ... --agent claude` round trip, `proof new` with a real model.
+5. Get `proof doctor` output from Mauk's laptop, then run `proof apply` against the LIVE boards (the sandbox couldn't reach them):
    check each reader still parses, and that fits look right on real posts. Then prompts for
    followup/prep (prompts.FOLLOW_UP, prompts.PREP) on a real model.
-5. Learn from the pitch log: feed the best-replying projects/angles back into the pitch prompt.
-6. Publish to PyPI (name `proof-cli` in pyproject.toml) once the real-model output is good.
+6. Learn from the pitch log: feed the best-replying projects/angles back into the pitch prompt.
+7. Publish to PyPI (name `proof-cli` in pyproject.toml) once the real-model output is good.

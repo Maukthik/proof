@@ -295,6 +295,8 @@ class FakeAPI(BaseHTTPRequestHandler):
     busy_once = False
 
     def do_GET(self):
+        if self.path.startswith("/gh/"):                 # a fake GitHub API
+            return self.github(self.path[len("/gh"):])
         page = {"/jobs/fastapi-dev": JOB_PAGE,
                 "/login-wall": "<html><body><h1>Please log in</h1></body></html>",
                 "/jobs.rss": todays_feed(),
@@ -302,6 +304,25 @@ class FakeAPI(BaseHTTPRequestHandler):
                                "<item><title>Job 2</title></item></channel></rss>",
                 "/api/tags": json.dumps({"models": [{"name": "qwen2.5-coder:7b"}]})}
         self.reply(200, page.get(self.path, "not found").encode(), "text/html")
+
+    def github(self, path):
+        if path.startswith("/repos/me/blocked"):
+            return self.reply(403, b'{"message": "blocked"}', "application/json")
+        answers = {
+            "/repos/me/app": {"default_branch": "main", "open_issues_count": 3,
+                              "html_url": "https://github.com/me/app"},
+            "/repos/me/app/pulls": [{"number": 7}],
+            "/repos/me/app/actions/runs": {"workflow_runs": [
+                {"status": "completed", "conclusion": "failure", "name": "CI",
+                 "html_url": "https://github.com/me/app/actions/runs/1"}]},
+            "/repos/me/app/issues": [{"number": 5, "title": "Login breaks on Safari",
+                                      "body": "Steps: open in Safari."},
+                                     {"number": 7, "title": "A PR", "pull_request": {}}],
+        }
+        answer = answers.get(path.split("?")[0])
+        if answer is None:
+            return self.reply(404, b'{"message": "Not Found"}', "application/json")
+        self.reply(200, json.dumps(answer).encode(), "application/json")
 
     def reply(self, status, data, content_type):
         self.send_response(status)
@@ -1610,3 +1631,176 @@ def test_doctor_spots_broken_boards_and_log(tmp_path, fake_api):
     assert doctor.log_checks(tmp_path)[0][0] == "FAIL"
     log.write_text(json.dumps({"x": {"status": "sent", "sent": "2026-01-01"}}))
     assert "proof followup x" in doctor.log_checks(tmp_path)[1][1]
+
+
+# ---------------------------------------------------------------------------
+# status / task / new: your projects
+# ---------------------------------------------------------------------------
+
+def git_in(repo, *args):
+    subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t.t", "-c", "user.name=t", *args],
+                   check=True, capture_output=True)
+
+
+PY_PROJECT = {
+    "README.md": "# Calc\nAdds numbers.\n",
+    "pyproject.toml": "[project]\nname = \"calc\"\n\n[tool.pytest.ini_options]\npythonpath = [\".\"]\n",
+    "calc.py": "def add(a, b):\n    # TODO: handle strings\n    return a + b\n",
+    "tests/test_calc.py": "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n",
+}
+
+
+def test_status_local(tmp_path):
+    projects = tmp_path / "projects"
+    app = make_repo(projects, "calc", PY_PROJECT)
+    make_repo(projects, "other", {"README.md": "# Other\n"})
+    out = tmp_path / "work"
+    (out / "proof_output" / "calc").mkdir(parents=True)
+    first = subprocess.run(["git", "-C", str(app), "rev-parse", "HEAD"], capture_output=True,
+                           text=True).stdout.strip()
+    (out / "proof_output" / "calc" / "meta.json").write_text(json.dumps({"commit": first}))
+    for _ in range(10):
+        commit_change(app)
+    (app / "calc.py").write_text("changed\n")
+
+    code, text = run("status", str(projects), "--offline", cwd=out)
+    assert code == 0, text
+    assert "Now tracking 2 more project(s)" in text
+    row = next(line for line in text.splitlines() if line.startswith("calc "))
+    assert "today" in row and "1 changed" in row
+    assert "calc: 1 uncommitted change(s)" in text
+    assert "calc: case study is 10 commits old" in text
+    assert "other: not on GitHub yet" in text
+    assert (out / "proof_output" / "status.md").exists()
+    code, again = run("status", "--offline", cwd=out)               # remembered
+    assert code == 0 and "other" in again and "Now tracking" not in again
+
+
+def test_status_github(tmp_path, fake_api, monkeypatch):
+    from proof import status
+    monkeypatch.setenv("GITHUB_API_URL", fake_api + "/gh")
+    app = make_repo(tmp_path, "app", {"README.md": "# App\n"})
+    git_in(app, "remote", "add", "origin", "https://github.com/me/app.git")
+    statuses, notes = status.collect([app], tmp_path / "out")
+    gh = statuses[0]["github"]
+    assert (gh["ci"], gh["issues"], gh["prs"]) == ("failure", 2, 1)
+    assert "CI is failing on GitHub: https://github.com/me/app/actions/runs/1" in \
+        status.needs_you(statuses[0])
+
+    blocked = make_repo(tmp_path, "blocked", {"README.md": "# B\n"})
+    git_in(blocked, "remote", "add", "origin", "git@github.com:me/blocked.git")
+    statuses, notes = status.collect([blocked, app], tmp_path / "out")
+    assert notes == ["GitHub answered HTTP 403 - CI, issues and PRs left out"]
+    assert "github" not in statuses[1]                         # not asked again after that
+
+
+def test_task_import_and_brief(tmp_path, fake_api, monkeypatch):
+    from proof import tasks
+    monkeypatch.setenv("GITHUB_API_URL", fake_api + "/gh")
+    app = make_repo(tmp_path, "calc", PY_PROJECT)
+    git_in(app, "remote", "add", "origin", "https://github.com/me/app")
+    out = tmp_path / "proof_output"
+    (out / "calc").mkdir(parents=True)
+    (out / "calc" / "suggestions.md").write_text(
+        "# x\n## Ideas\n\n### Add subtraction\n- What: a sub() next to add().\n"
+        "- Where: calc.py\n- Size: small (hours)\n- Done when: sub(5, 3) == 2\n")
+    task_list = []
+    for found in tasks.candidates(app, out):
+        tasks.add_task(task_list, **found)
+    titles = [t["title"] for t in task_list]
+    assert titles[:3] == ["Fix failing CI (CI)", "#5 Login breaks on Safari", "Add subtraction"]
+    assert "A PR" not in " ".join(titles)
+    assert "handle strings (calc.py:2)" in titles
+    assert any(t.startswith("Client-ready: CI on GitHub") for t in titles)
+    assert not any("facts" in t for t in titles)
+    assert tasks.add_task(task_list, "Add subtraction") is None          # no duplicates
+
+    idea = task_list[2]
+    text = tasks.brief(idea, app, branch="task/3-add-subtraction")
+    assert "a sub() next to add()." in text and "- calc.py (named in the task)" in text
+    assert "Done when\n- sub(5, 3) == 2" in text and "-m pytest -q`" in text
+    assert "task/3-add-subtraction" in text and "Never delete, skip or weaken a test" in text
+    assert tasks.related_files(app, {"title": "Handle strings in calc"}) == ["calc.py"]
+
+
+def test_task_start_check_done(tmp_path):
+    projects = tmp_path / "projects"
+    app = make_repo(projects, "calc", PY_PROJECT)
+    out = tmp_path / "work"
+    out.mkdir()
+    run("status", str(projects), "--offline", cwd=out)
+    code, text = run("task", "add", "calc", "Add subtraction", "--done-when", "sub works", cwd=out)
+    assert "Added task 1" in text
+
+    (app / "calc.py").write_text("dirty\n")
+    code, text = run("task", "start", "calc", "1", cwd=out)
+    assert code != 0 and "uncommitted changes" in text
+    git_in(app, "checkout", "--", "calc.py")
+
+    code, text = run("task", "start", "calc", "1", cwd=out)
+    assert code == 0, text
+    assert "task/1-add-subtraction" in text and "claude \"Do the task described in" in text
+    brief = (out / "proof_output" / "calc" / "tasks" / "T1.md").read_text()
+    assert "Work on the branch `task/1-add-subtraction`" in brief
+
+    code, text = run("task", "check", "calc", "1", cwd=out)
+    assert code != 0 and "Nothing has changed yet" in text
+
+    (app / "calc.py").write_text("def add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n"
+                                 "    return a - b\n")
+    git_in(app, "commit", "-qam", "Add sub")
+    code, text = run("task", "check", "calc", "1", "--done", cwd=out)
+    assert code == 0, text
+    assert "1 commit(s), 1 file(s) changed" in text and "passed" in text
+    assert "Task 1 marked done" in text
+    task = json.loads((out / "proof_output" / "calc" / "tasks.json").read_text())[0]
+    assert task["status"] == "done" and task["commit"]
+
+    run("task", "add", "calc", "Remove the old test", cwd=out)
+    run("task", "start", "calc", "2", cwd=out)
+    git_in(app, "rm", "-q", "tests/test_calc.py")
+    code, text = run("task", "check", "calc", "2", cwd=out)
+    assert code != 0 and "tests deleted: tests/test_calc.py" in text
+
+
+def test_failure_summary_explains_missing_packages():
+    from proof.tasks import failure_summary
+    output = "\n".join(["collecting ..."] + ["E   ModuleNotFoundError: No module named 'calc'"] * 3
+                       + [f"ERROR tests/test_{i}.py" for i in range(20)] + ["20 errors"])
+    summary = failure_summary(output)
+    assert summary.count("No module named 'calc'") == 1                  # once, not 3 times
+    assert "20 errors" in summary and "Hint: a package isn't installed" in summary
+
+
+def test_new_project(tmp_path):
+    out = tmp_path / "work"
+    out.mkdir()
+    code, text = run("new", "a tool that turns lecture notes into flashcards", "--provider",
+                     "mock", "--where", str(tmp_path), cwd=out)
+    assert code == 0, text
+    app = tmp_path / "mockapp"
+    for name in ["README.md", "PLAN.md", "pyproject.toml", "src/mockapp/__init__.py",
+                 "tests/test_smoke.py", ".github/workflows/ci.yml", ".gitignore"]:
+        assert (app / name).exists(), name
+    readme = (app / "README.md").read_text()
+    assert "## The problem\n(mock) a tool that turns lecture notes" in readme
+    assert "## Results" in readme and "## Quick start" in readme
+    log = subprocess.run(["git", "-C", str(app), "log", "--oneline"], capture_output=True,
+                         text=True).stdout
+    assert "Start mockapp (proof new)" in log
+    tests = subprocess.run([sys.executable, "-m", "pytest", "-q"], cwd=app, capture_output=True,
+                           text=True)
+    assert tests.returncode == 0, tests.stdout                     # the starter test passes
+    task_list = json.loads((out / "proof_output" / "mockapp" / "tasks.json").read_text())
+    assert [t["title"] for t in task_list] == ["Write the core function", "Add a test for it"]
+    assert str(app) in (out / "proof_output" / "projects.txt").read_text()
+
+    code, text = run("new", "same idea", "--provider", "mock", "--where", str(tmp_path),
+                     "--name", "mockapp", cwd=out)
+    assert code != 0 and "isn't empty" in text
+    code, text = run("new", "a shop", "--no-ai", "--stack", "node", "--name", "shop",
+                     "--where", str(tmp_path), cwd=out)
+    assert code == 0, text
+    assert json.loads((tmp_path / "shop" / "package.json").read_text())["scripts"]["test"] == \
+        "node --test"
+    assert "[add:" in (tmp_path / "shop" / "PLAN.md").read_text()

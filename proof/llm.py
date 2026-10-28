@@ -153,6 +153,8 @@ def mock_reply(prompt):
     if "Task: write a short follow-up" in prompt:
         return ("One more thing that fits your project: (mock) a detail the first message "
                 "didn't use. Would a short call on Thursday work?")
+    if "Task: write a short, practical plan" in prompt:
+        return mock_plan(prompt)
     if "Task: write a one-page brief" in prompt:
         return mock_prep(prompt)
     if "Resume bullets" in prompt:
@@ -165,6 +167,17 @@ def mock_reply(prompt):
     project = title.group(1).split(" - ")[0] if title else "my project"
     return (f"You need this built reliably. In {project} I built something very close "
             f"to it. Could we do a 15-minute call this week to go over your setup?")
+
+
+def mock_plan(prompt):
+    idea = re.search(r"=== IDEA ===\n(.*?)\n===", prompt, flags=re.DOTALL).group(1).strip()
+    return (f"# Mockapp - {idea[:60]}\n## The problem\n(mock) {idea}\n"
+            "## Who it's for\n- (mock) people with this problem\n"
+            "## First version\n- (mock) the main feature\n"
+            "## Stack\n- Python\n- FastAPI\n"
+            "## Milestones\n1. Core feature - done when: it runs on one example\n"
+            "## First tasks\n- Write the core function\n- Add a test for it\n"
+            "## Proof to collect\n- (mock) a timing\n")
 
 
 def mock_prep(prompt):

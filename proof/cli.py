@@ -12,6 +12,9 @@ Commands:
   apply   [BOARD ...]       new jobs from job boards that fit your projects, + pitch drafts
   followup PITCH            a short follow-up for a pitch that got no reply
   prep    PITCH|JOB         a brief for the client call: likely questions, gaps, intro
+  status  [FOLDER ...]      where each project stands: git, GitHub CI/issues/PRs, tasks
+  task    ACTION PROJECT    tasks per project: list, add, import, brief, start, check, done
+  new     IDEA              a plan and a starter repo from a one-line idea
   doctor                    check that everything works (paste its output when asking for help)
 
 Examples:
@@ -26,6 +29,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from datetime import date
@@ -36,12 +40,13 @@ from .apply import (board_name, console_lines, digest, find_fits, headline, is_r
 from .facts import fingerprint, read_facts, start_facts_file
 from .feeds import BOARDS, CACHE_HOURS, DEFAULT_BOARDS, FeedError, read_board
 from .jobpost import read_job, slug
-from . import casestudy, dataset, doctor, evaluate, suggest
+from . import casestudy, dataset, doctor, evaluate, newproject, status, suggest, tasks
 from .lint import lint_followup, lint_pitch, lint_prep, print_problems, unsupported_numbers
-from .llm import DEFAULT_MODELS, ask_llm, scan_budget, strip_wrapper
+from .llm import DEFAULT_MODELS, ask_llm, drop_preamble, scan_budget, strip_wrapper
 from .match import COMMON_TOOLS, rank_projects, tech_in
 from .portfolio import build_site, load_case_studies
-from .prompts import FOLLOW_UP, PITCH, PREP, PROFILE, SUGGEST
+from .projects import add_projects, check_commands, find_project, find_repos, load_projects
+from .prompts import FOLLOW_UP, NEW_PROJECT, PITCH, PREP, PROFILE, SUGGEST
 from .scan import (detect_stack, get_repo, has_enough_to_write_about, head_commit, is_url,
                    list_files, pushed_commit, remote_head, repo_name, scan_repo, web_url)
 from .tracker import STATUSES, find_pitch, load_log, record_pitch, report, update_status
@@ -609,6 +614,205 @@ def cmd_log(args):
     print(report(load_log(args.out)))
 
 
+# ---------------------------------------------------------------------------
+# status / task / new: your projects, not just your pitches
+# ---------------------------------------------------------------------------
+
+def cmd_status(args):
+    """Where every project stands, and what needs you. Folders given here are
+    remembered in proof_output/projects.txt, so next time `proof status` is enough."""
+    if args.paths:
+        repos = []
+        for path in args.paths:
+            if not Path(path).expanduser().is_dir():
+                sys.exit(f"Not a folder: {path}")
+            found = find_repos(path)
+            if not found:
+                print(f"  (no git repos in {path})")
+            repos += found
+        new = add_projects(args.out, repos)
+        if new:
+            print(f"Now tracking {len(new)} more project(s) in "
+                  f"{Path(args.out) / 'projects.txt'}")
+    else:
+        repos = load_projects(args.out)
+    if not repos:
+        sys.exit("No projects yet. Tell proof where they are:  proof status D:\\MyAIProjects")
+
+    if args.fetch and not args.offline:
+        print(f"Fetching {len(repos)} repo(s) from GitHub ...")
+        for repo in repos:
+            subprocess.run(["git", "-C", str(repo), "fetch", "-q"], capture_output=True)
+    statuses, notes = status.collect(repos, args.out, offline=args.offline)
+    text = status.report(statuses, notes)
+    print(text)
+    print(f"\nSaved to {status.save_report(args.out, text)}")
+
+
+def cmd_task(args):
+    """proof task <list|add|import|brief|start|check|done|drop> ..."""
+    if args.action == "list" and not args.project:
+        empty = []
+        for repo in load_projects(args.out):
+            lines = tasks.task_lines(tasks.load_tasks(args.out, repo.name))
+            if not lines:
+                empty.append(repo.name)
+                continue
+            print(f"{repo.name}: {len(lines)} open")
+            for line in lines:
+                print(line)
+        if empty:
+            print(f"No open tasks: {', '.join(empty)}  (proof task import <project> finds some)")
+        return
+
+    repo = find_project(args.out, args.project)
+    task_list = tasks.load_tasks(args.out, repo.name)
+
+    if args.action == "list":
+        lines = tasks.task_lines(task_list, show_closed=args.all)
+        print("\n".join(lines) or f"No open tasks. Add one:  proof task add {repo.name} \"...\"")
+        return
+    if args.action == "add":
+        task = tasks.add_task(task_list, args.title, args.details, args.where, args.done_when)
+        if not task:
+            sys.exit("There's already a task with that title.")
+        tasks.save_tasks(args.out, repo.name, task_list)
+        print(f"Added task {task['id']}: {task['title']}")
+        return
+    if args.action == "import":
+        added = [tasks.add_task(task_list, **found)
+                 for found in tasks.candidates(repo, args.out, offline=args.offline)]
+        added = [task for task in added if task]
+        tasks.save_tasks(args.out, repo.name, task_list)
+        print(f"Added {len(added)} task(s) to {repo.name}" + (":" if added else
+              " (nothing new found)."))
+        for line in tasks.task_lines(added):
+            print(line)
+        return
+
+    task = tasks.find_task(task_list, args.id)
+    if args.action == "brief":
+        path = save_brief(args.out, repo, task)
+        print(path.read_text(encoding="utf-8"))
+        print(f"Saved to {path}")
+    elif args.action == "start":
+        start_task(args, repo, task, task_list)
+    elif args.action == "check":
+        check_task(args, repo, task, task_list)
+    elif args.action in ("done", "drop"):
+        if args.action == "done":
+            tasks.finish(task, repo)
+        else:
+            task["status"] = "dropped"
+        tasks.save_tasks(args.out, repo.name, task_list)
+        outcome = "done" if args.action == "done" else "dropped"
+        print(f"Task {task['id']} {outcome}: {task['title']}")
+        if args.action == "done" and task.get("branch", "").startswith("task/"):
+            print(f"Its work is on the branch {task['branch']}. When you're happy with it, "
+                  f"merge it (or open a pull request on GitHub).")
+
+
+def save_brief(out_dir, repo, task):
+    path = tasks.brief_file(out_dir, repo.name, task)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(tasks.brief(task, repo, task.get("branch")), encoding="utf-8")
+    return path
+
+
+def start_task(args, repo, task, task_list):
+    branch = tasks.start(task, repo, new_branch=not args.no_branch)
+    tasks.save_tasks(args.out, repo.name, task_list)
+    path = save_brief(args.out, repo, task)
+    print(f"Task {task['id']} started on the branch {branch}. Brief: {path}")
+    prompt = tasks.agent_prompt(path)
+    if args.agent and tasks.start_agent(args.agent, prompt, repo):
+        print(f"\n{args.agent} has finished. Check the work:  "
+              f"proof task check {repo.name} {task['id']}")
+        return
+    if args.agent:
+        print(f"'{args.agent}' isn't installed or isn't on PATH.")
+    print(f"\nHand it to your coding agent, from the project folder:\n"
+          f"  cd \"{repo}\"\n  claude \"{prompt}\"\n"
+          f"(or paste the brief into Cursor). Then:  proof task check {repo.name} {task['id']}")
+
+
+def check_task(args, repo, task, task_list):
+    commits, files, deleted_tests = tasks.changes(task, repo)
+    if not task.get("base_commit"):
+        print("This task wasn't started with `proof task start`, so there's no starting "
+              "point to compare with. Running the checks only.")
+    else:
+        print(f"Since task {task['id']} started: {len(commits)} commit(s), "
+              f"{len(files)} file(s) changed")
+        for path in files[:20]:
+            print(f"  {path}")
+    if deleted_tests:
+        print(f"  WARN  tests deleted: {', '.join(deleted_tests)} - make sure that was right")
+    if len(files) > 25:
+        print(f"  WARN  {len(files)} files changed - more than a focused task usually needs")
+
+    commands = check_commands(repo)
+    results = tasks.run_checks(repo, commands) if commands else []
+    if not commands:
+        print("  WARN  no test command found for this project - check the change by hand")
+    passed = all(ok for _, ok in results) and not deleted_tests and bool(files or not
+                                                                        task.get("base_commit"))
+    if not files and task.get("base_commit"):
+        print("Nothing has changed yet.")
+    elif passed and args.done:
+        tasks.finish(task, repo)
+        tasks.save_tasks(args.out, repo.name, task_list)
+        print(f"All checks pass. Task {task['id']} marked done.")
+    elif passed:
+        print(f"All checks pass. If it does what the task says:  "
+              f"proof task done {repo.name} {task['id']}")
+    else:
+        print("Not done yet: fix what failed above (or ask the agent to), then check again.")
+    if not passed:
+        sys.exit(1)
+
+
+def cmd_new(args):
+    """An idea -> PLAN.md, a starter repo with a first commit, tasks, and tracking."""
+    projects = load_case_studies(args.out)
+    known = sorted({tech for p in projects for tech in p["stack"]})
+    wanted = {}
+    for entry in load_log(args.out).values():
+        for tech in entry.get("job_tech", []):
+            wanted[tech] = wanted.get(tech, 0) + 1
+    top_wanted = sorted(wanted.items(), key=lambda kv: -kv[1])[:12]
+
+    if args.no_ai:
+        plan = newproject.offline_plan(args.idea)
+    else:
+        print(f"Planning with {args.provider}/{args.model} ...")
+        plan = drop_preamble(strip_wrapper(ask_llm(NEW_PROJECT.format(
+            idea=args.idea, known=", ".join(known) or "(no case studies yet)",
+            wanted=", ".join(f"{t} ({n})" for t, n in top_wanted) or "(no pitches yet)"),
+            args.provider, args.model)))
+    name = args.name or newproject.plan_name(plan, args.idea)
+    folder = Path(args.where).expanduser().resolve() / name
+    template = newproject.pick_template(plan, args.stack)
+    files, committed = newproject.create_repo(folder, plan, template,
+                                              owner=newproject.git_user_name())
+
+    add_projects(args.out, [folder])
+    task_list = []
+    for title in newproject.plan_tasks(plan):
+        tasks.add_task(task_list, title, source="plan")
+    tasks.save_tasks(args.out, folder.name, task_list)
+
+    print(f"Created {folder} ({template}): {', '.join(files)}")
+    print("First commit made." if committed else
+          "No commit yet: set git's user.name and user.email, then commit the files.")
+    print(f"\nPlan: {folder / 'PLAN.md'} - read it, change anything you disagree with.")
+    print(f"Tasks ({len(task_list)}):")
+    for line in tasks.task_lines(task_list):
+        print(line)
+    print(f"\nNext:\n  proof task start {folder.name} 1 --agent claude\n"
+          f"  (put it on GitHub when ready, and `proof status` will show its CI)")
+
+
 def cmd_doctor(args):
     failures = doctor.run(args.out, args.provider, args.model, args.boards, args.offline)
     sys.exit(1 if failures else 0)
@@ -700,6 +904,55 @@ def main(argv=None):
     p.add_argument("--no-ai", action="store_true", help="Only the fit and the gaps")
     p.set_defaults(func=cmd_prep)
 
+    p = sub.add_parser("status", parents=[common],
+                       help="Where each of your projects stands, and what needs you")
+    p.add_argument("paths", nargs="*", metavar="FOLDER",
+                   help="A project, or a folder of projects (remembered for next time)")
+    p.add_argument("--offline", action="store_true", help="Skip GitHub (CI, issues, PRs)")
+    p.add_argument("--fetch", action="store_true",
+                   help="git fetch each repo first, to see commits you haven't pulled")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("task", help="Tasks per project, handed to a coding agent and checked")
+    actions = p.add_subparsers(dest="action", required=True)
+    a = actions.add_parser("list", parents=[common], help="Open tasks (all projects if none given)")
+    a.add_argument("project", nargs="?", help="Project name or folder")
+    a.add_argument("--all", action="store_true", help="Include done and dropped tasks")
+    a = actions.add_parser("add", parents=[common], help="Add a task")
+    a.add_argument("project", help="Project name or folder")
+    a.add_argument("title", help="What to do, in a line")
+    a.add_argument("--details", default="", help="More about it")
+    a.add_argument("--where", default="", help="Files to look at")
+    a.add_argument("--done-when", default="", help="How to tell it's done")
+    a = actions.add_parser("import", parents=[common],
+                           help="Tasks from GitHub issues, failing CI, suggest, checklist, TODOs")
+    a.add_argument("project", help="Project name or folder")
+    a.add_argument("--offline", action="store_true", help="Skip GitHub")
+    for action, text in [("brief", "Write the brief for a coding agent"),
+                         ("start", "Start a task on its own branch (and hand it to an agent)"),
+                         ("check", "What changed since the start; run lint and tests"),
+                         ("done", "Mark a task done"), ("drop", "Drop a task")]:
+        a = actions.add_parser(action, parents=[common], help=text)
+        a.add_argument("project", help="Project name or folder")
+        a.add_argument("id", help="Task number")
+        if action == "start":
+            a.add_argument("--agent", choices=tasks.AGENTS,
+                           help="Start this coding agent with the brief, in the project folder")
+            a.add_argument("--no-branch", action="store_true",
+                           help="Work on the current branch instead of a new one")
+        if action == "check":
+            a.add_argument("--done", action="store_true", help="Mark it done if every check passes")
+    p.set_defaults(func=cmd_task)
+
+    p = sub.add_parser("new", parents=[common], help="Plan a new project and create its repo")
+    p.add_argument("idea", help='The idea, in a sentence: "a tool that ..."')
+    p.add_argument("--name", help="Folder name (default: from the plan)")
+    p.add_argument("--where", default=".", help="Folder to create it in (default: here)")
+    p.add_argument("--stack", choices=sorted(newproject.TEMPLATES),
+                   help="Starter files (default: from the plan's stack)")
+    p.add_argument("--no-ai", action="store_true", help="A plan template to fill in yourself")
+    p.set_defaults(func=cmd_new)
+
     p = sub.add_parser("doctor", parents=[common], help="Check that everything proof needs works")
     p.add_argument("boards", nargs="*", metavar="BOARD",
                    help=f"Job boards to test (default: {' '.join(DEFAULT_BOARDS)})")
@@ -729,7 +982,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     args.model = args.model or DEFAULT_MODELS[args.provider]
     calls_llm = (args.command in ("case", "pitch", "profile", "eval", "suggest", "apply",
-                                  "followup", "prep")
+                                  "followup", "prep", "new")
                  and not getattr(args, "no_ai", False) and getattr(args, "draft", 1) != 0
                  and not getattr(args, "dry_run", False) and not getattr(args, "models", None))
     if calls_llm and not args.model:

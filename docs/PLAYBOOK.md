@@ -83,6 +83,26 @@ they want that you don't show and an honest way to answer, questions to ask them
   (keep the quotes in PowerShell).
 - `--scan-chars N`: how much of each repo the model sees.
 
+### `proof status`: all your projects at a glance
+`py -m proof status D:\MyAIProjects` finds every git repo in that folder (and remembers
+them). For each: branch, last commit, uncommitted or unpushed work, CI on GitHub, open
+issues and PRs, open tasks, and the client-ready score - then a "Needs you" list: CI
+failing, work not pushed, projects quiet for 30+ days, case studies 10+ commits old.
+
+### `proof task`: changes, handed to your coding agent
+Each project gets a task list. `proof task import <project>` fills it from failing CI,
+GitHub issues, `proof suggest` ideas, the client-ready checklist and TODO comments.
+`proof task start <project> <n> --agent claude` checks the repo is clean, makes a branch
+for the task, writes a brief (what, which files, the stack, the exact lint/test commands,
+rules like "never delete a test") and starts Claude Code with it. `proof task check`
+shows what changed, runs the checks, and flags deleted tests; `--done` marks it done if
+everything passes. Merging the branch stays your call.
+
+### `proof new`: from an idea to a repo
+`py -m proof new "a tool that ..." --where D:\MyAIProjects` plans the first version
+(using the technologies you know, plus one clients asked for), creates the repo with a
+README, tests, CI, a license and PLAN.md, makes the first commit, and fills its task list.
+
 ---
 
 ## Part 2 - Set up once
@@ -132,7 +152,39 @@ You can mix them: draft with A, then let the agent or you improve it and `check 
 
 ---
 
-## Part 4 - The full workflow, start to finish
+## Part 4a - Running your projects, day to day
+
+```powershell
+py -m proof status D:\MyAIProjects       # first time: finds and remembers your repos
+py -m proof status                        # every day after that
+```
+Work down the "Needs you" list. For private repos (or many projects), set a GitHub token
+first so CI, issues and PRs show up: create a fine-grained token with read-only access at
+github.com/settings/tokens, then `$env:GITHUB_TOKEN="<token>"`.
+
+Plan the work:
+```powershell
+py -m proof task import doppel            # from issues, CI, TODOs, suggest, checklist
+py -m proof task add doppel "Export results as CSV" --done-when "doppel export --csv works"
+py -m proof task list                     # every project's open tasks
+```
+Do one task with Claude Code:
+```powershell
+py -m proof task start doppel 3 --agent claude   # new branch + brief, Claude starts
+py -m proof task check doppel 3                  # what changed, lint + tests
+py -m proof task done doppel 3                   # or: check ... --done
+```
+Then merge the `task/3-...` branch yourself, or push it and open a pull request.
+Python projects: keep a `.venv` inside each project with its packages installed - proof
+runs the tests with it. Node projects: run `npm install` once.
+
+Start something new:
+```powershell
+py -m proof new "a tool that turns lecture notes into flashcards" --where D:\MyAIProjects
+py -m proof task start flashcards 1 --agent claude
+```
+
+## Part 4b - Turning projects into proof and work, start to finish
 
 ### Step 1. Make your projects easy to prove
 ```powershell
@@ -283,4 +335,7 @@ Start with `py -m proof doctor`: it checks all of the below in one go.
 | `LLM API busy, retrying` | free tiers limit requests per minute; proof waits and retries |
 | `Not a folder` | check the path, or use the GitHub URL |
 | `skipped: no code and no real README` | push some code first (or `--force`) |
+| `task check`: "No module named ..." | the project's packages aren't installed for the tests: make a `.venv` in the project and `pip install -e .` (or `-r requirements.txt`) |
+| `task start`: "uncommitted changes" | commit or stash first, so the task's changes stay separate |
+| `status`: "GitHub answered HTTP 403/401" | set or renew `GITHUB_TOKEN` |
 | `apply` finds nothing new | boards are re-read every 6h: `--refresh`; `--all` to see old fits; `--min-tech 1` to loosen |

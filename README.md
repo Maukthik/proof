@@ -1,7 +1,18 @@
 # proof: turn your repos into proof of skill
 
 Good projects don't turn into evidence a client trusts, and every proposal gets written
-from scratch. `proof` reads your GitHub repos and gives you:
+from scratch. `proof` reads your GitHub repos and helps you **run your projects** and
+**turn them into proof**.
+
+**Run your projects**
+- `proof status`: every project at a glance - uncommitted or unpushed work, CI failing on
+  GitHub, open issues and PRs, quiet projects, stale case studies - and what needs you.
+- `proof task`: a task list per project (from GitHub issues, failing CI, TODOs, ideas),
+  each handed to your coding agent (Claude Code, Codex, aider) as a precise brief on its own
+  branch, then checked: what changed, lint and tests run, deleted tests flagged.
+- `proof new`: from a one-line idea to a plan and a starter repo with tests, CI and tasks.
+
+**Turn them into proof**
 
 1. **Case studies** for clients, not professors: problem, what you built, how it works
    (with an architecture diagram drawn from the code's real imports), stack, results.
@@ -63,6 +74,15 @@ With Ollama the repo scan is sized to fit the context window (`OLLAMA_NUM_CTX`, 
 ## Use it
 
 ```bash
+# Run your projects
+proof status D:/MyAIProjects            # every git repo in that folder (remembered)
+proof status                            # next time: same projects
+proof task import doppel                # tasks from issues, failing CI, TODOs, suggest
+proof task start doppel 3 --agent claude   # own branch + brief, Claude Code does it
+proof task check doppel 3 --done        # what changed; lint + tests; done if green
+proof new "a tool that turns lecture notes into flashcards" --where D:/MyAIProjects
+
+# Turn them into proof
 # 1. Case studies: any mix of local folders and GitHub URLs.
 #    Re-running skips repos with no new commits and no new facts (--force to redo).
 proof case https://github.com/you/doppel ./rag-chatbot ./negotiation-platform
@@ -136,6 +156,9 @@ proof_output/
   jobs/<date>.md            jobs `proof apply` found that fit, with why and what's missing
   jobs/seen.json            jobs already shown (so each run shows only new ones)
   prep/<job>.md             call briefs
+  projects.txt              the project folders `proof status` watches
+  status.md                 the last `proof status`
+  <repo>/tasks.json         that project's tasks; <repo>/tasks/T<n>.md: briefs
   profile.md                Upwork / LinkedIn text + resume bullets
   site/index.html           upload to GitHub Pages / Netlify
 ```
@@ -187,7 +210,7 @@ so a quiet day costs no LLM calls.
 
 | File | Job |
 |---|---|
-| `proof/cli.py` | Command line: `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `apply`, `followup`, `prep`, `doctor`, `suggest`, `eval`, `dataset` |
+| `proof/cli.py` | Command line: `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `apply`, `followup`, `prep`, `status`, `task`, `new`, `doctor`, `suggest`, `eval`, `dataset` |
 | `proof/casestudy.py` | One case study: draft, checks, one repair round, source links |
 | `proof/claims.py` | Links each result to the README line it comes from |
 | `proof/diagram.py` | Checks diagram arrows against the imports; links boxes to files |
@@ -205,6 +228,11 @@ so a quiet day costs no LLM calls.
 | `proof/tracker.py` | The pitch log, follow-up reminders |
 | `proof/feeds.py` | Reads job boards: Remotive, Remote OK, We Work Remotely, Hacker News, any RSS/Atom feed |
 | `proof/apply.py` | `proof apply`: which new jobs fit your projects, and why |
+| `proof/projects.py` | Your projects list (`projects.txt`), and how to run each one's tests |
+| `proof/status.py` | `proof status`: git + GitHub state of every project, and what needs you |
+| `proof/tasks.py` | `proof task`: task lists, briefs for coding agents, start / check / done |
+| `proof/newproject.py` | `proof new`: plan + starter repo (Python, Node or plain) |
+| `proof/github.py` | The few GitHub API calls (CI, issues, PRs); `GITHUB_TOKEN` for private repos |
 | `proof/doctor.py` | `proof doctor`: checks setup, model, job boards, case studies, pitch log |
 | `proof/portfolio.py` | Builds the portfolio page |
 | `proof/suggest.py` | What to build next: checklist, client asks, ideas as coding tasks |
@@ -235,4 +263,5 @@ python -m pytest -q          # no LLM or internet needed
 - [ ] Tune prompts on real model output (see CLAUDE.md)
 - [ ] Run the fine-tuning loop for real (training/README.md)
 - [x] `proof apply` (job boards -> fits -> pitch drafts), follow-ups, call prep
+- [x] `proof status`, `proof task` (agent briefs, checks), `proof new`
 - [ ] Learn from the pitch log: feed what gets replies back into matching and pitches

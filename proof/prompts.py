@@ -258,3 +258,48 @@ Rules:
 - Plain words, no buzzwords.
 - Output only the Markdown above.
 """
+
+
+NEW_PROJECT = """A developer wants to start a new project. Below are their idea, the
+technologies they have already used in their projects, and technologies clients asked for
+in jobs they applied to.
+
+=== IDEA ===
+{idea}
+=== END OF IDEA ===
+
+=== TECHNOLOGIES THEY HAVE USED ===
+{known}
+=== END ===
+
+=== TECHNOLOGIES CLIENTS ASKED FOR (how many jobs) ===
+{wanted}
+=== END ===
+
+Task: write a short, practical plan for a first version they can finish in 2-4 weeks of
+evenings. Use exactly this Markdown (the shapes show the form only):
+
+# <Project name: one or two words> - <one line: what it does, and for whom>
+## The problem
+(2-3 sentences: who has this problem and what goes wrong for them today.)
+## Who it's for
+(One or two kinds of users.)
+## First version
+(3-6 bullets: the features of the first version, from a user's point of view. Leave out
+everything that can wait.)
+## Stack
+(Bullets. Mostly technologies they have already used. One technology clients asked for
+is good if it fits the idea - say which one and why.)
+## Milestones
+(3-5 numbered steps, each ending with "- done when: <a check anyone can do>".)
+## First tasks
+(5-8 bullets, each a task of a few hours, in the order to do them.)
+## Proof to collect
+(2-4 bullets: what to measure or show once it works, so the project becomes evidence for
+clients - for example a timing, an accuracy, a user count, a screenshot.)
+
+Rules:
+- Everything is about THIS idea. No market sizes, statistics or numbers you don't know.
+- Plain words, no buzzwords.
+- Output only the Markdown above, starting with the "# " title line.
+"""
