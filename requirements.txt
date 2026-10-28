@@ -1,3 +1,0 @@
-requests>=2.28
-markdown>=3.4
-# for running tests:  pip install pytest pyyaml

@@ -3,8 +3,9 @@ scan.py - read a repo and summarise it for the LLM.
 
 Main functions:
   get_repo(arg)       -> local Path (clones GitHub URLs)
+  repo_name(arg)      -> "my-app", for a URL or a folder
   detect_stack(repo)  -> ["Python", "FastAPI", "Docker", ...]   (no LLM needed)
-  scan_repo(repo)     -> one big text block: tree + stack + key files
+  scan_repo(repo)     -> one big text block: tree + stack + how files connect + key files
   head_commit(repo)   -> current commit id, used for caching
 """
 
@@ -14,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from .codemap import describe_imports, internal_imports
 
 # Folders we never look inside
 SKIP_DIRS = {
@@ -26,7 +29,7 @@ SKIP_DIRS = {
 IMPORTANT_FILES = [
     "requirements.txt", "pyproject.toml", "package.json", "go.mod", "Cargo.toml",
     "pom.xml", "build.gradle", "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
-    "Makefile", "CMakeLists.txt",
+    "Makefile", "CMakeLists.txt", ".env.example",   # .env.example names the services used
 ]
 
 # File extension -> language
@@ -37,7 +40,9 @@ LANGUAGES = {
     ".swift": "Swift", ".ino": "Arduino", ".sql": "SQL", ".tf": "Terraform",
     ".ipynb": "Jupyter",
 }
-CODE_EXTENSIONS = set(LANGUAGES) | {".h", ".yml", ".yaml"}
+# Schemas describe the data model: often the clearest picture of what an app does
+SCHEMA_EXTENSIONS = {".prisma", ".graphql", ".proto"}
+CODE_EXTENSIONS = set(LANGUAGES) | SCHEMA_EXTENSIONS | {".h", ".yml", ".yaml"}
 
 # Python import name -> nice name, when it differs from the pip name
 IMPORT_NAMES = {
@@ -45,6 +50,7 @@ IMPORT_NAMES = {
     "faiss": "FAISS", "llama_index": "LlamaIndex", "google.generativeai": "Gemini API",
     "sentence_transformers": "Hugging Face", "keras": "Keras", "xgboost": "XGBoost",
     "gradio": "Gradio", "matplotlib": "matplotlib", "ollama": "Ollama",
+    "sqlite3": "SQLite", "tkinter": "Tkinter", "google.adk": "Google ADK",
 }
 
 # Package name (as written in requirements.txt / package.json) -> nice name
@@ -63,14 +69,30 @@ PACKAGES = {
     "socket.io": "Socket.IO", "pytest": "pytest", "jest": "Jest",
     "contree-sdk": "Nebius ConTree", "groq": "Groq", "ollama": "Ollama",
     "google-generativeai": "Gemini API", "gradio": "Gradio", "httpx": "httpx",
+    "peft": "PEFT", "trl": "TRL", "vllm": "vLLM", "bitsandbytes": "bitsandbytes",
+    "google-adk": "Google ADK", "pydantic": "Pydantic", "uvicorn": "Uvicorn",
+    "selenium": "Selenium", "playwright": "Playwright", "scrapy": "Scrapy",
+    "stripe": "Stripe", "twilio": "Twilio", "supabase": "Supabase", "firebase-admin": "Firebase",
+    "mysql-connector-python": "MySQL", "pymysql": "MySQL", "opencv-python": "OpenCV",
+    "@prisma/client": "Prisma", "zod": "Zod", "vitest": "Vitest", "recharts": "Recharts",
+    "nodemailer": "Nodemailer", "next-auth": "NextAuth", "mongoose": "MongoDB",
+    "@supabase/supabase-js": "Supabase", "firebase": "Firebase", "three": "Three.js",
+    "@tanstack/react-query": "React Query", "redux": "Redux", "@reduxjs/toolkit": "Redux",
+    "react-native": "React Native", "expo": "Expo", "electron": "Electron",
+    "graphql": "GraphQL", "@apollo/client": "Apollo", "socket.io-client": "Socket.IO",
+    "@anthropic-ai/sdk": "Claude API", "ai": "Vercel AI SDK", "playwright-core": "Playwright",
+    "@playwright/test": "Playwright", "cypress": "Cypress", "vite": "Vite",
 }
 
 # Folders that support the project but aren't the product itself
 SIDE_DIRS = {
-    "test", "tests", "testing", "spec", "bench", "benchmark", "benchmarks", "example",
-    "examples", "demo", "demos", "docs", "doc", "fixtures", "samples", "sample",
+    "test", "tests", "testing", "spec", "__tests__", "bench", "benchmark", "benchmarks",
+    "example", "examples", "demo", "demos", "docs", "doc", "fixtures", "samples", "sample",
     "scripts", "vendor", "third_party", "migrations", "notebooks_old",
+    "legacy", "old", "archive", "deprecated",   # old versions, not what the project is now
 }
+# Test files that live next to the code: test_x.py, x_test.go, x.test.ts, x.spec.js
+TEST_FILE = re.compile(r"^test_.+\.py$|_test\.(py|go)$|\.(test|spec)\.[jt]sx?$")
 # File names that are usually the heart of a project
 ENTRYPOINTS = {"main.py", "app.py", "cli.py", "__main__.py", "server.py", "manage.py",
                "index.js", "index.ts", "main.go", "main.rs", "App.jsx", "App.tsx"}
@@ -78,22 +100,34 @@ ENTRYPOINTS = {"main.py", "app.py", "cli.py", "__main__.py", "server.py", "manag
 MAX_TREE_LINES = 200     # paths listed in the file tree
 MAX_FILE_CHARS = 6000    # max characters read from one file (README, configs)
 MAX_CODE_CHARS = 2500    # per code file - the top (imports, docstring, main defs) says most
-MAX_TOTAL_CHARS = 60000  # total code budget sent to the LLM
+MAX_TOTAL_CHARS = 70000  # whole scan, by default (llm.scan_budget picks a smaller one for Ollama)
+SUMMARY_CHARS = 4000     # part of that kept for one-line summaries of files that didn't fit
 
 
 # ---------------------------------------------------------------------------
 # Getting the repo
 # ---------------------------------------------------------------------------
 
-def get_repo(repo_arg):
-    """Return a local Path to the repo. Clones it first if it's a URL."""
-    if repo_arg.startswith(("http://", "https://", "git@")):
-        # "https://github.com/you/my-app.git" -> "my-app"
-        name = repo_arg.rstrip("/").split("/")[-1].removesuffix(".git")
-        target = Path(tempfile.mkdtemp(prefix="proof_")) / name
+def is_url(repo_arg):
+    """A repo to clone, not a local folder. (file:// is mostly for the tests.)"""
+    return repo_arg.startswith(("http://", "https://", "git@", "file://"))
+
+
+def repo_name(repo_arg):
+    """'https://github.com/you/my-app.git' or './my-app' -> 'my-app'"""
+    if is_url(repo_arg):
+        return repo_arg.rstrip("/").split("/")[-1].removesuffix(".git")
+    return Path(repo_arg).expanduser().resolve().name
+
+
+def get_repo(repo_arg, clone_dir=None):
+    """Return a local Path to the repo. URLs are cloned into `clone_dir` first."""
+    if is_url(repo_arg):
+        target = Path(clone_dir or tempfile.mkdtemp(prefix="proof_")) / repo_name(repo_arg)
         print(f"Cloning {repo_arg} ...")
-        result = subprocess.run(["git", "clone", "--quiet", repo_arg, str(target)],
-                                capture_output=True, text=True)
+        # blob:none = full history (for the commit stats) but only today's file contents
+        result = subprocess.run(["git", "clone", "--quiet", "--filter=blob:none",
+                                 repo_arg, str(target)], capture_output=True, text=True)
         if result.returncode != 0:
             sys.exit(f"git clone failed:\n{result.stderr}")
         return target
@@ -102,6 +136,12 @@ def get_repo(repo_arg):
     if not path.is_dir():
         sys.exit(f"Not a folder: {path}")
     return path
+
+
+def remote_head(url):
+    """Latest commit of a remote repo, without cloning it ('' if we can't tell)."""
+    result = subprocess.run(["git", "ls-remote", url, "HEAD"], capture_output=True, text=True)
+    return result.stdout.split()[0] if result.returncode == 0 and result.stdout else ""
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +205,8 @@ def git_stats(repo):
         return "No git history found."
     first = git(repo, "log", "--reverse", "--format=%ad", "--date=short").splitlines()[:1]
     last = git(repo, "log", "-1", "--format=%ad", "--date=short")
-    return f"{count} commits, from {first[0] if first else '?'} to {last}."
+    commits = "1 commit" if count == "1" else f"{count} commits"
+    return f"{commits}, from {first[0] if first else '?'} to {last}."
 
 
 # ---------------------------------------------------------------------------
@@ -216,8 +257,9 @@ def packages_in_imports(code):
     found = set()
     for name in re.findall(r"^(?:from|import)\s+([A-Za-z_][\w.]*)", code, flags=re.MULTILINE):
         top = name.split(".")[0]
-        if name.startswith("google.generativeai"):
-            found.add("Gemini API")
+        dotted = [key for key in IMPORT_NAMES if "." in key and (name + ".").startswith(key + ".")]
+        if dotted:                                # google.generativeai, google.adk
+            found.add(IMPORT_NAMES[dotted[0]])
         elif top.startswith("langchain"):         # langchain_openai, langchain_core ...
             found.add("LangChain")
         elif top in IMPORT_NAMES:
@@ -274,82 +316,108 @@ def detect_stack(repo, files=None):
 # ---------------------------------------------------------------------------
 
 def is_side_folder(f):
-    """True for files under tests/, bench/, examples/ ... - not the main product code."""
-    return any(part.lower() in SIDE_DIRS for part in f.parts[:-1])
+    """True for tests, benchmarks, examples, old versions ... - not the main product code.
+    Covers files in side folders (tests/, bench/) and test files next to the code."""
+    return side_folder_of(f) is not None or TEST_FILE.search(f.name) is not None
+
+
+def side_folder_of(f):
+    """'app/tests/unit/x.py' -> 'app/tests/'. None if f isn't inside a side folder."""
+    for i, part in enumerate(f.parts[:-1]):
+        if part.lower() in SIDE_DIRS:
+            return "/".join(f.parts[:i + 1]) + "/"
+    return None
 
 
 def code_priority(f):
     """Lower number = read earlier."""
     if is_side_folder(f):
-        return 3                                  # tests, benchmarks, examples: last
-    if f.name in ENTRYPOINTS or (f.parts[0] == "src" and len(f.parts) > 1):
-        return 0                                  # cli.py, main.py, anything in src/
+        return 4                                  # tests, benchmarks, examples: last
+    if f.suffix in SCHEMA_EXTENSIONS or f.name in ENTRYPOINTS:
+        return 0                                  # the data model, cli.py, main.py ...
     if f.suffix in (".yml", ".yaml"):
-        return 2                                  # config, after real code
-    return 1
+        return 3                                  # config and CI, after real code
+    if f.parts[0] == "src":
+        return 1
+    return 2
 
 
-def pick_files_to_read(files):
-    """README, dependency files, up to 2 CI workflows, then code - main code first."""
+def pick_files_to_read(files, importers=None):
+    """README, dependency files, then code in order of importance: entrypoints and schemas,
+    then the modules most other files import (the core), then config, then tests.
+    `importers`: {path: how many of the project's files import it}."""
+    importers = importers or {}
     readme = [f for f in files if f.name.lower().startswith("readme")][:1]
     important = [f for f in files if f.name in IMPORTANT_FILES
                  and len(f.parts) <= 2 and not is_side_folder(f)]   # root, or backend/...
-    workflows = [f for f in files if ".github" in f.parts and f.suffix in (".yml", ".yaml")][:2]
 
-    already = set(readme + important + workflows)
+    already = set(readme + important)
     code = [f for f in files if f.suffix in CODE_EXTENSIONS and f not in already]
-    code.sort(key=lambda f: (code_priority(f), len(f.parts), f.name))
-
-    return readme + important + workflows + code
+    code.sort(key=lambda f: (code_priority(f), -importers.get(f.as_posix(), 0),
+                             len(f.parts), f.name))
+    return readme + important + code
 
 
 def summarise_tree(files):
-    """File tree, but big side folders (bench/, tests/ ...) shrink to one line each."""
+    """File tree, but side folders (bench/, tests/ ...) shrink to one line each."""
     lines, side_counts = [], {}
     for f in files:
-        if is_side_folder(f):
-            top = f.parts[0] + "/"
-            side_counts[top] = side_counts.get(top, 0) + 1
+        folder = side_folder_of(f)
+        if folder:
+            side_counts[folder] = side_counts.get(folder, 0) + 1
         else:
-            lines.append(str(f))
+            lines.append(str(f))     # loose test files stay listed: they show testing
     if len(lines) > MAX_TREE_LINES:
         lines = lines[:MAX_TREE_LINES] + [f"... and {len(lines) - MAX_TREE_LINES} more files"]
-    lines += [f"{folder}  ({count} files: tests/benchmarks/examples)"
+    lines += [f"{folder}  ({count} files, not main code)"
               for folder, count in sorted(side_counts.items())]
     return "\n".join(lines)
 
 
-def scan_repo(repo):
-    """Build one big text summary of the repo for the LLM."""
+def scan_repo(repo, budget=MAX_TOTAL_CHARS):
+    """Build one text summary of the repo for the LLM, at most `budget` characters
+    (plus a short list of files that didn't fit)."""
     files = list_files(repo)
-    tree = summarise_tree(files)
+    main_files = [f for f in files if not is_side_folder(f)]
+    edges = internal_imports(repo, main_files, read_text)
+    importers = {}
+    for _, target in edges:
+        importers[target] = importers.get(target, 0) + 1
+    imports = describe_imports(edges)
 
     parts = [
         f"# Repo name: {repo.name}",
         f"# Detected stack: {', '.join(detect_stack(repo, files)) or 'unknown'}",
         f"# Git history: {git_stats(repo)}",
-        f"# File tree ({len(files)} files):\n{tree}",
+        f"# File tree ({len(files)} files):\n{summarise_tree(files)}",
     ]
+    if imports:
+        parts.append("# How the files connect (A -> B means A imports B):\n" + imports)
 
-    used = 0
+    used = sum(len(part) for part in parts)
     not_read = []
-    for f in pick_files_to_read(files):
-        is_code = f.suffix in CODE_EXTENSIONS and f.suffix not in (".yml", ".yaml")
+    for f in pick_files_to_read(files, importers):
+        is_code = f.suffix in LANGUAGES or f.suffix == ".h"   # configs and schemas get more room
         if f.name.lower().startswith("readme") and len(f.parts) == 1:
             text = readme_extract(read_text(repo / f, limit=1_000_000))
         else:
             text = read_text(repo / f, limit=MAX_CODE_CHARS if is_code else MAX_FILE_CHARS)
         if not text.strip():
             continue
-        if used + len(text) > MAX_TOTAL_CHARS:
+        if used + len(text) > budget - SUMMARY_CHARS:
             not_read.append(f)
             continue
         parts.append(f"# File: {f}\n```\n{text}\n```")
         used += len(text)
 
     # Files that didn't fit: still give one line each, so the LLM knows they exist
-    summaries = [f"- {f}: {first_line_summary(repo / f)}" for f in not_read
-                 if not is_side_folder(f) and first_line_summary(repo / f)][:60]
+    summaries, summary_chars = [], 0
+    for f in not_read:
+        summary = first_line_summary(repo / f)
+        line = f"- {f}: {summary}"
+        if summary and not is_side_folder(f) and summary_chars + len(line) < SUMMARY_CHARS:
+            summaries.append(line)
+            summary_chars += len(line) + 1
     if summaries:
         parts.append("# Other main files (not shown, first line of each):\n" + "\n".join(summaries))
 

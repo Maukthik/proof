@@ -7,7 +7,7 @@ Score = 3 points per shared tech term (e.g. "fastapi", "docker", "rag")
 
 import re
 
-from scan import LANGUAGES, PACKAGES
+from .scan import LANGUAGES, PACKAGES
 
 # Tech words worth extra points. Multi-word terms are fine ("github actions").
 EXTRA_TECH = {

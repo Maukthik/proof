@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proof-cli"
+dynamic = ["version"]
+description = "Turn your GitHub repos into proof of skill: case studies, tailored pitches, a portfolio page."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Maukthik J" }]
+dependencies = ["requests>=2.28", "markdown>=3.4"]
+
+[project.optional-dependencies]
+test = ["pytest", "pyyaml"]
+
+[project.scripts]
+proof = "proof.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Maukthik/proof"
+
+[tool.setuptools]
+packages = ["proof"]
+
+[tool.setuptools.dynamic]
+version = { attr = "proof.__version__" }

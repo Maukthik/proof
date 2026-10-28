@@ -9,24 +9,34 @@ Core problem it solves: good projects don't turn into evidence a client trusts, 
 application/proposal gets rewritten from scratch.
 
 ## Layout
-- `proof.py`: CLI with `case`, `pitch`, `lint`, `site`
-- `scan.py`: reads a repo, picks what the LLM sees, detects the stack without an LLM
-- `prompts.py`: the LLM instructions (case study, pitch)
-- `llm.py`: providers: anthropic, ollama, openai-compatible, mock (offline)
-- `match.py`: explainable job ↔ project ranking (no LLM)
-- `lint.py`: rule-based pitch checks
-- `portfolio.py`: static portfolio page (Python-Markdown + Mermaid via CDN)
-- `templates/proof-workflow.yml`: GitHub Action template
+Everything is in the `proof/` package (installed as the `proof` command via `pyproject.toml`).
+- `proof/cli.py`: CLI with `case`, `pitch`, `lint`, `profile`, `site`, `log`
+- `proof/scan.py`: reads a repo, picks what the LLM sees (sized to the model's context), detects the stack without an LLM
+- `proof/codemap.py`: which files import which (Python, JS/TS): grounds the architecture diagram
+- `proof/prompts.py`: the LLM instructions (case study, pitch, profile). Material first, instructions last
+- `proof/llm.py`: providers: anthropic, ollama, openai-compatible, mock (offline); retries; tidies replies (fences, preamble, Mermaid labels)
+- `proof/facts.py`: per-project `facts.md`, written by the user, used for every claim
+- `proof/match.py`: explainable job ↔ project ranking (no LLM)
+- `proof/jobpost.py`: job post from a file, URL (schema.org JobPosting or page text) or stdin
+- `proof/lint.py`: rule-based checks: pitch lint, case study format, numbers not found in any source
+- `proof/tracker.py`: pitch log (`proof_output/pitches/log.json`) and reply rates
+- `proof/portfolio.py`: static portfolio page (Python-Markdown + Mermaid via CDN)
+- `templates/`: GitHub Actions: portfolio (Pages, daily + on ping), ping-portfolio, per-project case study
 - `tests/test_proof.py`: pytest, no network or LLM needed
 - `examples/doppel/`: real output for github.com/maukthik/doppel (case study written by
   Claude following prompts.py by hand, since no model was available)
 
 ## How to work on it
 - Run tests: `python -m pytest -q` (all must pass before committing)
-- Try the whole flow with no model: `python proof.py case <repo> --provider mock`, then `python proof.py site`
+- Run without installing: `python -m proof ...`; or `pip install -e ".[test]"` once, then `proof ...`
+- Try the whole flow with no model: `proof case <repo> --provider mock`, then `proof site`
 - Real model: `--provider ollama` (Mauk's laptop: RTX 3050 6GB, runs qwen2.5-coder:7b) or openai-compatible
-- Test every change on a REAL repo too (e.g. maukthik/doppel), not only the fixtures. Most bugs so far
-  were found that way: side folders swamping the scan, dev deps counted as stack, README results cut off.
+- Test every change on a REAL repo too (e.g. maukthik/doppel, codefork, client-desk), not only the
+  fixtures. Most bugs so far were found that way: side folders swamping the scan, dev deps counted as
+  stack, README results cut off, root-level test files and legacy/ read as main code, schema.prisma
+  never read, prompts too long for Ollama's context (it silently drops the START of the prompt).
+- Check the portfolio page in a real browser when touching portfolio.py (desktop/mobile, light/dark,
+  and that every Mermaid diagram draws).
 
 ## Code style (important)
 - Mauk reads every line. Keep code plain and readable: small functions, clear names, a short comment
@@ -36,16 +46,22 @@ application/proposal gets rewritten from scratch.
 - Don't name a module after a stdlib module (we hit this with `site.py`).
 
 ## Status (2026-10-28)
-Done and tested: multi-repo case studies with commit caching, notebook support, stack detection from
-deps and top-level imports, main-code-first scanning, README results extraction, case study format check,
-job matching, pitch + linter, portfolio page (checked desktop/mobile, light/dark), GH Action template.
+Done and tested: multi-repo case studies with commit + facts caching, edit protection (`case_study.new.md`),
+facts.md loop for [add: ...] gaps, notebook support, stack detection from deps and top-level imports,
+import map for diagrams, importance-ordered scanning sized to the model's context, README results
+extraction, case study format + invented-number checks, Mermaid label fixing, job matching, pitch from
+file/URL/stdin + linter, profile + resume bullets, pitch log with reply rates, portfolio page (checked
+desktop/mobile, light/dark, broken diagrams hidden), GH Action templates (portfolio on Pages,
+ping, per-project), packaging (`pipx install git+https://github.com/Maukthik/proof`).
 
-Not yet verified: output quality from a real model. That's the first thing to check.
+Not yet verified: output quality from a real model (no model could be run where this was built).
+That's the first thing to check.
 
 ## Next gaps to close (in priority order)
-1. Run on Mauk's real repos with a real model; tune `prompts.py` from what comes out wrong.
-2. `pitch` from a job URL or pasted text (stdin), not only a file.
-3. Profile outputs from the same case studies: Upwork/LinkedIn "about" text and resume bullets.
-4. Pitch tracker: log sent pitches and replies (`proof.py log`) to learn which projects and angles win.
-5. Verify claims: flag case-study numbers that don't appear anywhere in the repo scan.
-6. Package it: `pyproject.toml` with a `proof` command, so `pipx install` works.
+1. Run on Mauk's real repos with a real model (`proof case ... --provider ollama`); tune `prompts.py`
+   from what comes out wrong. Look at: sections missing, diagram boxes that don't exist, numbers
+   flagged by the claim check, generic "Skills shown".
+2. Try the templates for real: a `portfolio` repo with repos.txt, Pages on, one ping from doppel.
+3. `proof apply`: watch a job feed (RSS / saved search) and draft pitches for good matches.
+4. Learn from the pitch log: feed the best-replying projects/angles back into the pitch prompt.
+5. Publish to PyPI (name `proof-cli` in pyproject.toml) once the real-model output is good.

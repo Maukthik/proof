@@ -1,25 +1,31 @@
-# GitHub Action: rewrite docs/CASE_STUDY.md whenever you push to main.
+# GitHub Action for ONE project repo: keeps its case study up to date on every push.
+#
+# Writes docs/proof/<repo>/case_study.md (plus meta.json, and facts.md for you to fill in)
+# and commits it back. It never overwrites a case study you edited by hand: the new
+# version goes to case_study.new.md instead. Want all your projects on one page that
+# updates itself? Use portfolio-workflow.yml instead (or as well).
 #
 # Setup (once per repo):
 #   1. Copy this file to .github/workflows/proof.yml in the project repo
-#   2. Change PROOF_TOOL_REPO below to wherever you pushed the proof tool
-#   3. Repo Settings -> Secrets and variables -> Actions:
+#   2. Repo Settings -> Secrets and variables -> Actions:
 #        secrets:   OPENAI_BASE_URL, OPENAI_API_KEY   (e.g. OpenRouter / Groq free tier)
 #        variables: PROOF_MODEL                       (a model id from that service)
+#      (or secret ANTHROPIC_API_KEY + variable PROOF_PROVIDER = anthropic)
+#   3. Push, or press "Run workflow" in the Actions tab.
 
 name: Update case study
 
 on:
   push:
     branches: [main]
-    paths-ignore: ["docs/**", "**.md"]   # don't re-run (and spend tokens) on doc-only changes
-  workflow_dispatch: {}                  # adds a "Run workflow" button
+    paths:                       # later lines win: run on code changes and on new facts,
+      - "**"                     # not on other doc edits (they'd only spend tokens)
+      - "!**.md"
+      - "docs/proof/**/facts.md"
+  workflow_dispatch: {}          # adds a "Run workflow" button
 
 permissions:
-  contents: write                        # needed to commit the case study back
-
-env:
-  PROOF_TOOL_REPO: https://github.com/YOUR_USERNAME/proof.git
+  contents: write                # needed to commit the case study back
 
 jobs:
   case-study:
@@ -27,31 +33,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0                 # full history, for the commit stats
+          fetch-depth: 0         # full history, for the commit stats
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Get the proof tool
-        run: |
-          git clone --depth 1 "$PROOF_TOOL_REPO" /tmp/proof
-          pip install -r /tmp/proof/requirements.txt
+      - name: Install proof
+        run: pip install git+https://github.com/Maukthik/proof
 
       - name: Write case study
         env:
-          PROOF_PROVIDER: openai
+          PROOF_PROVIDER: ${{ vars.PROOF_PROVIDER || 'openai' }}
+          PROOF_MODEL: ${{ vars.PROOF_MODEL }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          PROOF_MODEL: ${{ vars.PROOF_MODEL }}
-        run: |
-          python /tmp/proof/proof.py case . --out /tmp/out
-          mkdir -p docs
-          cp /tmp/out/*/case_study.md docs/CASE_STUDY.md
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: proof case . --out docs/proof
 
       - name: Commit if it changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/CASE_STUDY.md
+          git add docs/proof
           git diff --cached --quiet || (git commit -m "Update case study" && git push)

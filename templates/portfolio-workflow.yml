@@ -1,0 +1,100 @@
+# GitHub Action for a PORTFOLIO repo: one page with all your projects, kept up to date
+# and published on GitHub Pages.
+#
+# It runs every day (and when a project pings it, see ping-portfolio.yml). Projects with
+# no new commits and no new facts are skipped without even cloning them, so a quiet day
+# costs no LLM calls. Case studies you edit by hand are never overwritten.
+#
+# Setup (once):
+#   1. Make a new repo, e.g. "portfolio", with:
+#        repos.txt                         one GitHub URL per line (# for comments)
+#        .github/workflows/portfolio.yml   this file
+#   2. Settings -> Pages -> Source: "GitHub Actions"
+#   3. Settings -> Secrets and variables -> Actions:
+#        secrets:   OPENAI_BASE_URL, OPENAI_API_KEY   (or ANTHROPIC_API_KEY)
+#        variables: PROOF_MODEL, PORTFOLIO_OWNER ("Your Name"),
+#                   PORTFOLIO_CONTACT ("you@mail.com · github.com/you"),
+#                   PROOF_PROVIDER (only if not "openai")
+#        optional:  secret PROOF_GITHUB_TOKEN, a read-only token, if some repos are private
+#   4. Actions tab -> Portfolio -> Run workflow. The page appears at
+#      https://<you>.github.io/portfolio/
+#
+# Your case studies and facts.md files live in proof_output/ in this repo: edit them
+# here (on GitHub or locally) and the next run uses your changes.
+# Free GitHub Pages needs a PUBLIC repo, so don't commit pitches or profile drafts here:
+# add "proof_output/pitches/" and "proof_output/profile.md" to its .gitignore.
+
+name: Portfolio
+
+on:
+  schedule:
+    - cron: "17 3 * * *"          # every day at 03:17 UTC
+  workflow_dispatch: {}           # "Run workflow" button
+  repository_dispatch:
+    types: [project-pushed]       # sent by ping-portfolio.yml in your project repos
+  push:
+    branches: [main]
+    paths: ["repos.txt", "proof_output/**"]   # you edited facts or a case study
+
+permissions:
+  contents: write                 # commit case studies back
+  pages: write                    # publish the page
+  id-token: write
+
+concurrency:
+  group: portfolio                # one run at a time; a queued run picks up all changes
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install proof
+        run: pip install git+https://github.com/Maukthik/proof
+
+      - name: Access private repos (only if PROOF_GITHUB_TOKEN is set)
+        env:
+          TOKEN: ${{ secrets.PROOF_GITHUB_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+
+      - name: Case studies (only for projects that changed)
+        env:
+          PROOF_PROVIDER: ${{ vars.PROOF_PROVIDER || 'openai' }}
+          PROOF_MODEL: ${{ vars.PROOF_MODEL }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: proof case $(grep -v '^\s*#' repos.txt)
+
+      - name: Build the page
+        env:
+          OWNER: ${{ vars.PORTFOLIO_OWNER || 'My projects' }}
+          CONTACT: ${{ vars.PORTFOLIO_CONTACT }}
+        run: proof site --owner "$OWNER" --contact "$CONTACT"
+
+      - name: Save case studies back to this repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A proof_output ':!proof_output/site' ':!proof_output/pitches' \
+                     ':!proof_output/profile.md' ':!proof_output/*/prompt.txt'
+          git diff --cached --quiet || (git commit -m "Update case studies" && git push)
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: proof_output/site
+      - id: deploy
+        uses: actions/deploy-pages@v4

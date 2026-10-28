@@ -12,11 +12,13 @@ from pathlib import Path
 
 import markdown
 
+from .facts import read_facts
+
 MERMAID_JS = "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
 
 
 def load_case_studies(out_dir):
-    """Read every <out_dir>/<project>/case_study.md (+ meta.json if there)."""
+    """Read every <out_dir>/<project>/case_study.md (+ meta.json and facts.md if there)."""
     projects = []
     for md_file in sorted(Path(out_dir).glob("*/case_study.md")):
         folder = md_file.parent
@@ -30,7 +32,7 @@ def load_case_studies(out_dir):
 
         projects.append({
             "slug": folder.name, "name": name.strip(), "tagline": tagline.strip(),
-            "text": text, "stack": meta.get("stack", []),
+            "text": text, "stack": meta.get("stack", []), "facts": read_facts(folder),
             "placeholders": len(re.findall(r"\[add:", text)),
         })
     return projects
@@ -61,6 +63,16 @@ def to_html(md_text):
     return body
 
 
+# Tools every project has, or that no client searches for: shown after the rest
+MINOR_TOOLS = {"GitHub Actions", "pytest", "Jest", "Vitest", "Nodemailer", "httpx", "Pydantic",
+               "Uvicorn", "NumPy", "pandas", "matplotlib", "Pillow", "Zod", "Vite", "Jupyter"}
+
+
+def headline_stack(stack, count=6):
+    """The 6 stack items for a project card: frameworks and services first."""
+    return sorted(stack, key=lambda name: name in MINOR_TOOLS)[:count]
+
+
 def build_site(out_dir, owner="My projects", contact=""):
     projects = load_case_studies(out_dir)
     if not projects:
@@ -68,7 +80,8 @@ def build_site(out_dir, owner="My projects", contact=""):
 
     cards, sections = [], []
     for p in projects:
-        chips = "".join(f"<span class='chip'>{html.escape(s)}</span>" for s in p["stack"][:6])
+        chips = "".join(f"<span class='chip'>{html.escape(s)}</span>"
+                        for s in headline_stack(p["stack"]))
         cards.append(f"""<a class="card" href="#{p['slug']}">
   <h3>{html.escape(p['name'])}</h3>
   <p>{html.escape(p['tagline'])}</p>
@@ -136,7 +149,7 @@ PAGE = """<!doctype html>
 <div class="wrap">
   <header>
     <h1>{owner}</h1>
-    <p>{count} - what I built, how it works, and what I learned.</p>
+    <p>{count} - what I built, how it works, and what came of it.</p>
     {contact}
   </header>
   <div class="grid">
@@ -146,9 +159,22 @@ PAGE = """<!doctype html>
 </div>
 <script src="{mermaid_js}"></script>
 <script>
+  // Draw the diagrams. One with a syntax error is left out: a client should never
+  // see Mermaid's error picture. (Open the browser console to see what was wrong.)
   if (window.mermaid) {{
     const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-    mermaid.initialize({{ startOnLoad: true, theme: dark ? "dark" : "default" }});
+    mermaid.initialize({{ startOnLoad: false, theme: dark ? "dark" : "default" }});
+    (async () => {{
+      for (const diagram of document.querySelectorAll("pre.mermaid")) {{
+        try {{
+          await mermaid.parse(diagram.textContent);
+        }} catch (error) {{
+          console.warn("Diagram left out, it has a Mermaid syntax error:", error);
+          diagram.remove();
+        }}
+      }}
+      await mermaid.run({{ querySelector: "pre.mermaid" }});
+    }})();
   }}
 </script>
 </body>
