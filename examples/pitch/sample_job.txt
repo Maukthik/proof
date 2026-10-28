@@ -1,0 +1,16 @@
+Client portal for our design studio (Next.js + Stripe)
+
+We're a 6-person design studio. Right now we send files over email, chase approvals in
+Slack and invoice from a spreadsheet. We want a simple portal where our clients can log
+in, see their projects, review and approve deliverables, and pay invoices by card.
+
+Must have:
+- Next.js (App Router) and TypeScript
+- Stripe payments, including webhooks
+- PostgreSQL (Prisma is fine)
+- Role-based access: our team vs. clients, each client sees only their own work
+- Email notifications
+
+Nice to have: deployment on Vercel or AWS, automated tests.
+
+Please tell us about something similar you've built. Budget: fixed price, 4-6 weeks.

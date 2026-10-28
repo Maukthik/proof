@@ -23,8 +23,9 @@ Everything is in the `proof/` package (installed as the `proof` command via `pyp
 - `proof/portfolio.py`: static portfolio page (Python-Markdown + Mermaid via CDN)
 - `templates/`: GitHub Actions: portfolio (Pages, daily + on ping), ping-portfolio, per-project case study
 - `tests/test_proof.py`: pytest, no network or LLM needed
-- `examples/doppel/`: real output for github.com/maukthik/doppel (case study written by
-  Claude following prompts.py by hand, since no model was available)
+- `examples/`: real output for doppel and client-desk: case studies, a pitch, a profile, the page
+  (LLM replies written by Claude by hand from the real prompts, run through the real pipeline;
+  see examples/README.md). Use them as the quality bar when tuning prompts.
 
 ## How to work on it
 - Run tests: `python -m pytest -q` (all must pass before committing)

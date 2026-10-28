@@ -1,0 +1,22 @@
+{
+  "name": "client-desk",
+  "source": "https://github.com/Maukthik/client-desk",
+  "commit": "07a40b3a3922ab30226c4be0b08afce91fe599d4",
+  "stack": [
+    "Next.js",
+    "Nodemailer",
+    "Prisma",
+    "React",
+    "Recharts",
+    "Stripe",
+    "Tailwind",
+    "TypeScript",
+    "Vitest",
+    "Zod"
+  ],
+  "provider": "by hand",
+  "model": "Claude, following proof/prompts.py",
+  "generated": "2026-10-28",
+  "facts": "e3b0c44298fc1c14",
+  "written": "787f73820577de38"
+}

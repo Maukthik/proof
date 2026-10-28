@@ -45,16 +45,69 @@
 <div class="wrap">
   <header>
     <h1>Maukthik J</h1>
-    <p>1 project - what I built, how it works, and what I learned.</p>
-    <p class="contact">github.com/maukthik</p>
+    <p>2 projects - what I built, how it works, and what came of it.</p>
+    <p class="contact">github.com/Maukthik</p>
   </header>
   <div class="grid">
+<a class="card" href="#client-desk">
+  <h3>ClientDesk</h3>
+  <p>a client portal where small agencies share work, get approvals and get paid</p>
+  <div class="chips"><span class='chip'>Next.js</span><span class='chip'>Prisma</span><span class='chip'>React</span><span class='chip'>Recharts</span><span class='chip'>Stripe</span><span class='chip'>Tailwind</span></div>
+</a>
 <a class="card" href="#doppel">
   <h3>Doppel</h3>
   <p>a GitHub check that runs every pull request against main and proves each regression</p>
-  <div class="chips"><span class='chip'>GitHub Actions</span><span class='chip'>Nebius ConTree</span><span class='chip'>OpenAI SDK</span><span class='chip'>Python</span><span class='chip'>pytest</span></div>
+  <div class="chips"><span class='chip'>Nebius ConTree</span><span class='chip'>OpenAI SDK</span><span class='chip'>Python</span><span class='chip'>SQLite</span><span class='chip'>GitHub Actions</span><span class='chip'>pytest</span></div>
 </a>
   </div>
+<article id="client-desk"><h1>ClientDesk - a client portal where small agencies share work, get approvals and get paid</h1>
+<h2>The problem</h2>
+<p>Small agencies run each client over email threads, shared drives and separate invoicing tools. Files get lost, approvals hide in inboxes, and nobody can see at a glance what is overdue. Clients want one place to see their projects, sign off on work and pay.</p>
+<h2>What I built</h2>
+<p>ClientDesk is a multi-tenant web app with three roles:</p>
+<ul>
+<li><strong>Agency owners</strong> sign up, create their agency, invite their team and clients by email, connect Stripe and set the currency.</li>
+<li><strong>Team members</strong> create projects, upload deliverables for review, and send invoices.</li>
+<li><strong>Clients</strong> log in to see only their own projects, download files, approve a deliverable or request changes, and pay open invoices by card.</li>
+</ul>
+<p>A dashboard shows revenue collected by month, outstanding and overdue balances, project status, deliverables waiting for review and recent activity. Emails go out for invitations, new invoices, review requests, review decisions and payments.</p>
+<h2>How it works</h2>
+<p>Pages use the Next.js App Router; every change goes through Server Actions, and file uploads, downloads and the Stripe webhook are API routes. All tenant data is read through scope helpers in <code>src/lib/dal.ts</code>, so a query can only return the viewer's own agency (or, for a client, their own company). Prisma talks to PostgreSQL. Files are stored on disk behind a small storage interface, and payments run through Stripe Checkout.</p>
+<pre class="mermaid">flowchart TD
+  U[&quot;Owner / team / client (browser)&quot;] --&gt; P[&quot;Next.js pages: auth + portal&quot;]
+  P --&gt; A[&quot;Server Actions (all changes)&quot;]
+  U --&gt; R[&quot;API routes: files, uploads, Stripe webhook&quot;]
+  A --&gt; D[&quot;dal.ts: per-agency, per-client scoping&quot;]
+  R --&gt; D
+  D --&gt; DB[&quot;Prisma + PostgreSQL&quot;]
+  R --&gt; FS[&quot;File storage (local disk)&quot;]
+  A --&gt; M[&quot;Email via Nodemailer&quot;]
+  ST[&quot;Stripe Checkout&quot;] --&gt; R
+</pre>
+<h2>Tech stack</h2>
+<ul>
+<li><strong>Languages:</strong> TypeScript</li>
+<li><strong>Frameworks:</strong> Next.js 16 (App Router, Server Actions), React 19, Tailwind CSS 4, Zod, Recharts</li>
+<li><strong>Data:</strong> Prisma 6, PostgreSQL</li>
+<li><strong>Payments and email:</strong> Stripe Checkout and Stripe Connect (Express accounts), Nodemailer (any SMTP)</li>
+<li><strong>Quality:</strong> Vitest unit tests, ESLint, <code>tsc</code> type checks</li>
+</ul>
+<h2>Engineering highlights</h2>
+<ul>
+<li><strong>Tenant isolation in one place:</strong> <code>requireViewer</code>, <code>requireTeam</code> and <code>requireOwner</code> in <code>src/lib/dal.ts</code> gate every page and action, and clients only ever see their own company's projects, files and non-draft invoices.</li>
+<li><strong>Payments that can't double-count:</strong> <code>settleCheckoutSession</code> in <code>src/lib/invoices.ts</code> is called by both the webhook and the post-checkout redirect, and a conditional OPEN -&gt; PAID update makes it idempotent. In Connect mode, <code>account.updated</code> events keep each agency's "can take payments" flag in sync.</li>
+<li><strong>Safe file serving:</strong> <code>/api/files/[id]</code> checks access on every download, and anything that could run script in the browser (HTML, SVG) is always sent as a download with <code>nosniff</code>.</li>
+<li><strong>Careful auth:</strong> bcrypt password hashes; sessions are random 256-bit tokens stored only as SHA-256 hashes in an <code>httpOnly</code> cookie; invitations are single-use, bound to an email, stored hashed and expire after 14 days.</li>
+<li><strong>Correct money:</strong> amounts are stored in minor units, with zero-decimal currencies (like JPY) handled in <code>src/lib/money.ts</code>, and invoice numbers are allocated atomically per agency.</li>
+</ul>
+<h2>Results</h2>
+<ul>
+<li><mark>[add: agencies or clients using it, or a live demo link]</mark></li>
+<li><mark>[add: invoices or payments processed]</mark></li>
+<li>Unit tests for money, forms and helpers (Vitest).</li>
+</ul>
+<h2>Skills shown</h2>
+<p>Next.js, React, TypeScript, Server Actions, Prisma, PostgreSQL, Stripe payments, Stripe Connect, webhooks, multi-tenant SaaS, authentication and sessions, role-based access control, file uploads, Tailwind CSS, SaaS dashboards, Vitest</p><a class="top" href="#">Back to top</a></article>
 <article id="doppel"><h1>Doppel - a GitHub check that runs every pull request against main and proves each regression</h1>
 <h2>The problem</h2>
 <p>Tests check only what someone thought to assert; reviewers read the diff and guess. A one-line schema change in microblog-api, a well-tested Flask app, leaked every user's password hash, yet all 44 tests passed and an AI code review called it "safe". Teams need to see what a PR actually <em>does</em> before it merges.</p>
@@ -106,9 +159,22 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
 <script>
+  // Draw the diagrams. One with a syntax error is left out: a client should never
+  // see Mermaid's error picture. (Open the browser console to see what was wrong.)
   if (window.mermaid) {
     const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-    mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default" });
+    mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "default" });
+    (async () => {
+      for (const diagram of document.querySelectorAll("pre.mermaid")) {
+        try {
+          await mermaid.parse(diagram.textContent);
+        } catch (error) {
+          console.warn("Diagram left out, it has a Mermaid syntax error:", error);
+          diagram.remove();
+        }
+      }
+      await mermaid.run({ querySelector: "pre.mermaid" });
+    })();
   }
 </script>
 </body>

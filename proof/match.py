@@ -17,10 +17,12 @@ EXTRA_TECH = {
     "graphql", "websocket", "microservices", "machine learning", "deep learning",
     "nlp", "computer vision", "fine-tuning", "prompt engineering", "arduino",
     "iot", "embedded", "postgres", "mysql", "sqlite", "supabase", "firebase",
+    "webhook", "payments", "saas", "multi-tenant", "role-based access", "rbac", "oauth", "jwt",
+    "vercel", "netlify", "heroku", "unit tests", "automated tests", "e2e", "lora", "qlora",
 }
 TECH_TERMS = {t.lower() for t in list(PACKAGES) + list(PACKAGES.values())
               + list(LANGUAGES.values())} | EXTRA_TECH
-TECH_TERMS -= {"c", "next", "express", "go"}   # too ambiguous as plain English words
+TECH_TERMS -= {"c", "next", "express", "go", "three", "ai"}   # also plain English words
 TECH_TERMS |= {"golang", "next.js", "express.js"}
 
 STOPWORDS = set("""a an the and or but if of to in on for with by from at as is are was were be

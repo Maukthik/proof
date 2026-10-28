@@ -242,6 +242,7 @@ def test_pitch_end_to_end(repos, tmp_path):
     code, out = run("pitch", str(job), "--provider", "mock", cwd=tmp_path)
     assert code == 0, out
     assert out.index("rag-bot") < out.index("shop-ui")         # ranking order printed
+    assert "Writing pitch using: rag-bot ..." in out           # shop-ui shares no tech
     pitch = (tmp_path / "proof_output" / "pitches" / "upwork_rag.md").read_text()
     assert "rag-bot" in pitch
 
@@ -665,6 +666,8 @@ def test_profile(repos, tmp_path):
     assert "## Resume bullets" in profile and "### rag-bot" in profile and "### shop-ui" in profile
     code, out = run("profile", "--provider", "mock", "--only", "shop-ui", cwd=tmp_path)
     assert "### rag-bot" not in (tmp_path / "proof_output" / "profile.md").read_text()
+    code, out = run("profile", "--provider", "mock", "--only", "nope", cwd=tmp_path)
+    assert code != 0 and "No case studies called nope" in out
 
 
 def test_api_retries_when_busy(fake_api, monkeypatch):
@@ -672,3 +675,13 @@ def test_api_retries_when_busy(fake_api, monkeypatch):
     monkeypatch.setenv("OPENAI_BASE_URL", fake_api + "/busy-once/v1")
     FakeAPI.busy_once = True
     assert llm.ask_llm("hello", "openai", "m1") == "openai ok"
+
+
+def test_api_routes_before_ui_kit(tmp_path):
+    files = {f"src/app/p{i}/page.tsx": 'import { Button } from "@/components/ui/button";\n'
+             for i in range(5)}
+    files["src/components/ui/button.tsx"] = "export const Button = 1\n"
+    files["src/app/api/webhooks/stripe/route.ts"] = "export async function POST() {}\n"
+    text = scan_repo(make_repo(tmp_path, "web", files))
+    assert (text.index("# File: src/app/api/webhooks/stripe/route.ts")
+            < text.index("# File: src/components/ui/button.tsx"))

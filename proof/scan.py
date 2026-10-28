@@ -95,7 +95,10 @@ SIDE_DIRS = {
 TEST_FILE = re.compile(r"^test_.+\.py$|_test\.(py|go)$|\.(test|spec)\.[jt]sx?$")
 # File names that are usually the heart of a project
 ENTRYPOINTS = {"main.py", "app.py", "cli.py", "__main__.py", "server.py", "manage.py",
-               "index.js", "index.ts", "main.go", "main.rs", "App.jsx", "App.tsx"}
+               "index.js", "index.ts", "main.go", "main.rs", "App.jsx", "App.tsx",
+               "route.ts", "route.js", "middleware.ts"}      # Next.js API handlers
+# Buttons, cards, icons: imported by every page, but they say little about the product
+UI_KIT_DIRS = {"ui", "icons", "styles", "assets"}
 
 MAX_TREE_LINES = 200     # paths listed in the file tree
 MAX_FILE_CHARS = 6000    # max characters read from one file (README, configs)
@@ -335,8 +338,8 @@ def code_priority(f):
         return 4                                  # tests, benchmarks, examples: last
     if f.suffix in SCHEMA_EXTENSIONS or f.name in ENTRYPOINTS:
         return 0                                  # the data model, cli.py, main.py ...
-    if f.suffix in (".yml", ".yaml"):
-        return 3                                  # config and CI, after real code
+    if f.suffix in (".yml", ".yaml") or UI_KIT_DIRS & set(f.parts[:-1]):
+        return 3                                  # config, CI and UI kit, after real code
     if f.parts[0] == "src":
         return 1
     return 2

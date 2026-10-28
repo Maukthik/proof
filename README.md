@@ -128,7 +128,7 @@ so a quiet day costs no LLM calls.
 | `proof/tracker.py` | The pitch log |
 | `proof/portfolio.py` | Builds the portfolio page |
 | `templates/` | GitHub Actions (see above) |
-| `examples/doppel/` | Real output for [doppel](https://github.com/Maukthik/doppel) |
+| `examples/` | Real output for two projects: case studies, a pitch, a profile, the page |
 
 ## Tests
 

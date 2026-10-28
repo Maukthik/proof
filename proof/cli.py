@@ -153,9 +153,12 @@ def cmd_pitch(args):
     print("Project match for this job:")
     for p in ranked:
         print(f"  {p['score']:5.1f}  {p['name']:<28} {', '.join(p['matched']) or '-'}")
-    if ranked[0]["score"] == 0:
-        print("  (no real overlap - this job may not suit your current projects)")
-    chosen = [p for p in ranked if p["score"] > 0][:args.top] or ranked[:1]
+    # Only projects that share real tech with the job are evidence; a shared
+    # everyday word or two isn't. If none do, use the best one anyway.
+    chosen = [p for p in ranked if p["matched"]][:args.top]
+    if not chosen:
+        print("  (no shared tech - this job may not suit your current projects)")
+        chosen = ranked[:1]
     chosen = [{**p, "text": p["case_study"]} for p in chosen]
 
     print(f"Writing pitch using: {', '.join(p['name'] for p in chosen)} ...")
@@ -190,6 +193,8 @@ def cmd_profile(args):
     projects = require_case_studies(args.out)
     if args.only:
         projects = [p for p in projects if p["slug"] in args.only or p["name"] in args.only]
+        if not projects:
+            sys.exit(f"No case studies called {', '.join(args.only)} in {args.out}.")
     case_studies = "\n\n".join(project_block(p) for p in projects)
     print(f"Writing profile from: {', '.join(p['name'] for p in projects)} ...")
     profile = strip_wrapper(ask_llm(PROFILE.format(case_studies=case_studies),
