@@ -1337,3 +1337,57 @@ def test_portfolio_turns_click_lines_into_links():
     assert "data-links=" in page and "https://github.com/me/x/blob/c/cli.py" in page
     assert "click A" not in page and "javascript:" not in page.split("data-links=")[1][:200]
     assert "Click a box to see its code." in page and "Dashed arrows" in page
+
+
+# ---------------------------------------------------------------------------
+# Agent mode: proof scan + proof check (an idea from REA: agents call the tool)
+# ---------------------------------------------------------------------------
+
+AGENT_CASE_STUDY = """# rag-bot - answers questions about PDFs
+## The problem
+Support teams answer the same PDF questions by hand.
+## What I built
+A chatbot over PDFs.
+## How it works
+A FastAPI app.
+```mermaid
+flowchart TD
+    U["User"] --> A["API (app/main.py)"]
+```
+## Tech stack
+- FastAPI
+## Engineering highlights
+- `app/main.py` serves the API.
+## Results
+- [add: users]
+## Skills shown
+FastAPI
+"""
+
+
+def test_scan_prints_what_the_model_sees(repos, tmp_path):
+    code, out = run("scan", str(repos["rag"]), cwd=tmp_path)
+    assert code == 0 and out.startswith("# Repo name: rag-bot")
+    code, out = run("scan", str(repos["rag"]), "--prompt", cwd=tmp_path)
+    assert "=== REPOSITORY SCAN ===" in out and "Output only the case study" in out
+
+
+def test_check_gates_and_saves_an_agents_case_study(repos, tmp_path):
+    (tmp_path / "bad.md").write_text(AGENT_CASE_STUDY.replace("app/main.py", "sync/queue.py"))
+    code, out = run("check", "bad.md", "--repo", str(repos["rag"]), cwd=tmp_path)
+    assert code == 1 and "sync/queue.py" in out
+
+    (tmp_path / "good.md").write_text(AGENT_CASE_STUDY)
+    code, out = run("check", "good.md", "--repo", str(repos["rag"]), "--save", cwd=tmp_path)
+    assert code == 0 and "no problems found" in out and "[rag-bot] saved" in out
+    meta = json.loads((tmp_path / "proof_output" / "rag-bot" / "meta.json").read_text())
+    assert meta["provider"] == "agent" and meta["problems"] == []
+    code, out = run("site", cwd=tmp_path)                       # the rest of proof uses it
+    assert code == 0 and "1 project" in out
+
+
+def test_agent_skill_file_is_valid():
+    skill = (TOOL / "agents" / "proof-case-study" / "SKILL.md").read_text()
+    front = yaml.safe_load(skill.split("---")[1])
+    assert front["name"] == "proof-case-study" and "case study" in front["description"]
+    assert "proof check" in skill and "--save" in skill

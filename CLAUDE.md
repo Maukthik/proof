@@ -10,9 +10,12 @@ application/proposal gets rewritten from scratch.
 
 ## Layout
 Everything is in the `proof/` package (installed as the `proof` command via `pyproject.toml`).
-- `proof/cli.py`: CLI with `case`, `pitch`, `lint`, `profile`, `site`, `log`, `suggest`, `eval`, `dataset`
+- `proof/cli.py`: CLI with `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `suggest`, `eval`, `dataset`
 - `proof/casestudy.py`: one case study: draft -> lint checks -> one repair round (prompts.REVISE) -> source links
 - `proof/claims.py`: links each Results line to the README line stating the same numbers the same way
+- `proof/diagram.py`: arrows between real files must be backed by an import (else dashed); boxes get click links
+- `proof/redact.py`: removes keys/passwords from every prompt (known formats + secret-looking assignments)
+- `proof/outline.py`: signatures of files that don't fit (Python via ast, others via line patterns)
 - `proof/scan.py`: reads a repo (git-tracked files only), picks what the LLM sees, sized to the model's context
 - `proof/stack.py`: stack detection without an LLM: dependency files (Python, JS, Go, Rust, JVM/Android, Ruby, PHP), imports, language shares
 - `proof/codemap.py`: which files import which (Python, JS/TS, Go, Java/Kotlin, Rust): grounds the architecture diagram
@@ -28,6 +31,8 @@ Everything is in the `proof/` package (installed as the `proof` command via `pyp
   log `job_tech`), model ideas turned into coding-assistant tasks
 - `proof/evaluate.py`: `proof eval`: repo x model, scored by lint checks only, compared with the last run
 - `proof/dataset.py`: `proof dataset`: chat-format JSONL from edited / clean / eval case studies
+- `agents/proof-case-study/SKILL.md`: agent mode (`proof scan` -> agent writes -> `proof check --save`)
+- `docs/COMPARISON.md`: research on REA, gitdiagram, aider, repomix, DeepWiki, portfolio/proposal tools
 - `training/`: fine-tuning kit (repos.txt, train_lora.py for Kaggle + Unsloth, Modelfile, README).
   train_lora.py has never been run (no GPU where it was written)
 - `templates/`: GitHub Actions: portfolio (Pages, daily + on ping), ping-portfolio, per-project case study

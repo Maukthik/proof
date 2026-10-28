@@ -109,9 +109,17 @@ def write_case_study(repo_arg, clone_dir, args):
     print(f"[{name}] writing case study with {args.provider}/{args.model} ...")
     result = casestudy.write(repo, repo_scan, facts, args.provider, args.model,
                              say=lambda message: print(f"[{name}] {message}"))
-    commit = head_commit(repo)
-    case_study, dashed = casestudy.finish(result["case_study"], repo, facts,
-                                          web_url(repo_arg, repo), pushed_commit(repo))
+    save_case_study(result["case_study"], result["problems"], repo_arg, repo, facts, out_dir,
+                    meta, args.provider, args.model)
+
+
+def save_case_study(case_study, problems, repo_arg, repo, facts, out_dir, meta, provider, model):
+    """Link results and check the diagram, then write case_study.md (or case_study.new.md
+    if you edited the old one) and meta.json, and say what's left to do."""
+    name = out_dir.name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    case_study, dashed = casestudy.finish(case_study, repo, facts, web_url(repo_arg, repo),
+                                          pushed_commit(repo))
 
     # Never overwrite a case study you edited: put the new one next to it instead
     edited = was_edited(out_dir / "case_study.md", meta)
@@ -119,17 +127,17 @@ def write_case_study(repo_arg, clone_dir, args):
     target.write_text(case_study + "\n", encoding="utf-8")
 
     meta = {
-        "name": name, "source": repo_arg, "commit": commit,
+        "name": name, "source": repo_arg, "commit": head_commit(repo),
         "stack": detect_stack(repo, list_files(repo)),
-        "provider": args.provider, "model": args.model,
+        "provider": provider, "model": model,
         "generated": date.today().isoformat(),
         "facts": fingerprint(facts),                   # to notice when you add facts
         "written": fingerprint(case_study + "\n"),     # to notice when you edit it
-        "problems": result["problems"],                # what the checks still found
+        "problems": problems,                          # what the checks still found
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
-    report_case_study(name, target, case_study, edited, result["problems"])
+    report_case_study(name, target, case_study, edited, problems)
     if dashed:
         print(f"[{name}]   {dashed} diagram arrow(s) aren't backed by an import in the code: "
               f"drawn dashed (fine for HTTP calls or README-documented flows)")
@@ -229,6 +237,42 @@ def cmd_suggest(args):
 
 def checklist_text(checks):
     return "\n".join(f"- [{'x' if passed else ' '}] {what}" for passed, what, _, _ in checks)
+
+
+# ---------------------------------------------------------------------------
+# scan / check: let a coding agent (Claude Code, Cursor, Codex) write case studies,
+# with proof as the source of facts and the checker (an idea from REA)
+# ---------------------------------------------------------------------------
+
+def cmd_scan(args):
+    """Print what the model would see for a repo - secrets removed - so an agent or a
+    person can write the case study themselves."""
+    with tempfile.TemporaryDirectory(prefix="proof_") as clone_dir:
+        repo = get_repo(args.repo, clone_dir)
+        facts = read_facts(Path(args.out) / repo.name)
+        removed = []
+        repo_scan = scan_repo(repo, budget=args.scan_chars or 70_000, removed=removed)
+        print(casestudy.build_prompt(repo_scan, facts) if args.prompt else repo_scan)
+        warn_about_secrets(repo.name, removed)
+
+
+def cmd_check(args):
+    """Run every check on a case study written by anyone. --save files it like `case` does."""
+    text = Path(args.file).read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory(prefix="proof_") as clone_dir:
+        repo = get_repo(args.repo, clone_dir)
+        out_dir = Path(args.out) / repo.name
+        facts = read_facts(out_dir)
+        repo_scan = scan_repo(repo, budget=args.scan_chars or 70_000)
+        problems = casestudy.review(text, casestudy.review_context(repo, repo_scan, facts))
+        for problem in problems:
+            print(f"  WARN  {problem}")
+        if not problems:
+            print("Check: no problems found.")
+        if args.save:
+            save_case_study(text, problems, args.repo, repo, facts, out_dir, load_meta(out_dir),
+                            "agent", "written outside proof")
+    sys.exit(1 if problems else 0)
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +436,20 @@ def main(argv=None):
                         "Set it to make training data for a smaller model's context.")
     p.set_defaults(func=cmd_case)
 
+    p = sub.add_parser("scan", parents=[common], help="Print what the model would see")
+    p.add_argument("repo", help="Local folder or GitHub URL")
+    p.add_argument("--prompt", action="store_true", help="The whole prompt, not just the scan")
+    p.add_argument("--scan-chars", type=int, default=None, help="How much of the repo to show")
+    p.set_defaults(func=cmd_scan)
+
+    p = sub.add_parser("check", parents=[common], help="Check a case study written by anyone")
+    p.add_argument("file", help="The case study (Markdown)")
+    p.add_argument("--repo", required=True, help="The repo it's about (folder or GitHub URL)")
+    p.add_argument("--save", action="store_true",
+                   help="Add source links, check the diagram, save it to the output folder")
+    p.add_argument("--scan-chars", type=int, default=None, help="How much of the repo to compare")
+    p.set_defaults(func=cmd_check)
+
     p = sub.add_parser("eval", parents=[common], help="Score models on writing case studies")
     p.add_argument("repos", nargs="+", help="Local folders, GitHub URLs, or @list.txt")
     p.add_argument("--models", nargs="+", help="Models to compare (default: --model)")
@@ -441,4 +499,7 @@ def main(argv=None):
                  and not getattr(args, "dry_run", False) and not getattr(args, "models", None))
     if calls_llm and not args.model:
         sys.exit("Pick a model with --model or PROOF_MODEL.")
-    args.func(args)
+    try:
+        args.func(args)
+    except BrokenPipeError:            # `proof scan repo | head`: the reader stopped early
+        sys.stderr.close()

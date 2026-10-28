@@ -93,6 +93,10 @@ proof eval ./doppel ./client-desk --provider ollama --models llama3.1:8b-instruc
 
 # 9. Training data for fine-tuning a local model (see training/README.md)
 proof dataset --exclude doppel client-desk
+
+# 10. Let a coding agent write it, with proof as the checker (see below)
+proof scan ./doppel --prompt          # what the model would see, secrets removed
+proof check draft.md --repo ./doppel --save
 ```
 
 A file listing repos (one per line, `#` comments) works anywhere repos go: `proof case
@@ -121,6 +125,14 @@ last. The amount is sized to the model: about 35K characters for Ollama's defaul
 70K for cloud models. Repos with no code and no real README are skipped: there's nothing true
 to write. To see exactly what a model would get: `proof case <repo> --dry-run`.
 
+## Use it with a coding agent
+
+A strong agent (Claude Code, Cursor, Codex) writes better than a small local model, but it
+still needs facts and checks. `agents/proof-case-study/SKILL.md` gives it the routine:
+`proof scan <repo> --prompt` for the material, write the case study, `proof check` until it
+passes, then `proof check --save` to link the results and file it. Copy that folder to
+`~/.claude/skills/` for Claude Code, or paste the file into another agent's rules.
+
 ## How it keeps things true
 
 - The model is told to use only numbers from the repo scan and your `facts.md`. Anything else
@@ -128,9 +140,12 @@ to write. To see exactly what a model would get: `proof case <repo> --dry-run`.
 - After writing, every number is checked: any that appears in neither the repo nor your facts
   is flagged ("the model may have made this up"). Pitches are checked against the case
   studies and the job post.
-- The diagram is based on which files actually import which (Python and JS/TS), so it shows
-  the real structure. Labels are quoted so Mermaid can draw them, and a diagram that still
-  fails is left off the page rather than shown as an error.
+- The diagram is based on which files actually import which. After writing, every arrow
+  between two real files is checked against the imports; one the code doesn't show is drawn
+  dashed. Boxes link to their files on GitHub. A diagram that fails to draw is left off the
+  page rather than shown as an error.
+- Keys and passwords written into the code are removed before anything reaches a model, and
+  `proof` tells you which files to clean up.
 
 ## Keep it updated automatically (GitHub Actions)
 
@@ -147,9 +162,12 @@ so a quiet day costs no LLM calls.
 
 | File | Job |
 |---|---|
-| `proof/cli.py` | Command line: `case`, `pitch`, `lint`, `profile`, `site`, `log`, `suggest`, `eval`, `dataset` |
+| `proof/cli.py` | Command line: `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `suggest`, `eval`, `dataset` |
 | `proof/casestudy.py` | One case study: draft, checks, one repair round, source links |
 | `proof/claims.py` | Links each result to the README line it comes from |
+| `proof/diagram.py` | Checks diagram arrows against the imports; links boxes to files |
+| `proof/redact.py` | Keeps keys and passwords in the code out of every prompt |
+| `proof/outline.py` | Signatures of the files that don't fit the model's budget |
 | `proof/scan.py` | Reads a repo (incl. notebooks) and picks what the LLM sees |
 | `proof/stack.py` | Detects the stack from dependency files, imports and languages |
 | `proof/codemap.py` | Which files import which: the skeleton of the architecture diagram |
@@ -165,6 +183,8 @@ so a quiet day costs no LLM calls.
 | `proof/evaluate.py` | `proof eval`: scores models with the checks, compares with the last run |
 | `proof/dataset.py` | Fine-tuning data from case studies we trust |
 | `training/` | Fine-tuning kit: public repo list, Kaggle training script, Ollama Modelfile, guide |
+| `agents/proof-case-study/` | Skill file: how a coding agent writes case studies with proof |
+| `docs/COMPARISON.md` | proof next to REA, gitdiagram, aider, repomix, DeepWiki, portfolio and proposal tools |
 | `templates/` | GitHub Actions (see above) |
 | `tools/survey.py` | Dev check: what the model would see, across many repos |
 | `examples/` | Real output for two projects: case studies, a pitch, a profile, the page |
