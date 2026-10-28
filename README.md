@@ -48,7 +48,7 @@ proof case ./some-repo --provider mock
 proof site
 ```
 
-Then pick a real LLM:
+Then pick a real LLM (and check it all works with `proof doctor`):
 
 | Provider | Cost | Setup |
 |---|---|---|
@@ -111,7 +111,11 @@ proof log need-a-fastapi-dev followed-up
 # 12. They want a call: likely questions + answers from your projects, gaps, an intro
 proof prep need-a-fastapi-dev
 
-# 13. Let a coding agent write it, with proof as the checker (see below)
+# 13. Something not working? One check of everything: setup, model, job boards, your files
+proof doctor                           # paste its output when asking for help
+proof doctor --offline                 # no network: skips the model test and the boards
+
+# 14. Let a coding agent write it, with proof as the checker (see below)
 proof scan ./doppel --prompt          # what the model would see, secrets removed
 proof check draft.md --repo ./doppel --save
 ```
@@ -183,7 +187,7 @@ so a quiet day costs no LLM calls.
 
 | File | Job |
 |---|---|
-| `proof/cli.py` | Command line: `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `apply`, `followup`, `prep`, `suggest`, `eval`, `dataset` |
+| `proof/cli.py` | Command line: `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `apply`, `followup`, `prep`, `doctor`, `suggest`, `eval`, `dataset` |
 | `proof/casestudy.py` | One case study: draft, checks, one repair round, source links |
 | `proof/claims.py` | Links each result to the README line it comes from |
 | `proof/diagram.py` | Checks diagram arrows against the imports; links boxes to files |
@@ -201,6 +205,7 @@ so a quiet day costs no LLM calls.
 | `proof/tracker.py` | The pitch log, follow-up reminders |
 | `proof/feeds.py` | Reads job boards: Remotive, Remote OK, We Work Remotely, Hacker News, any RSS/Atom feed |
 | `proof/apply.py` | `proof apply`: which new jobs fit your projects, and why |
+| `proof/doctor.py` | `proof doctor`: checks setup, model, job boards, case studies, pitch log |
 | `proof/portfolio.py` | Builds the portfolio page |
 | `proof/suggest.py` | What to build next: checklist, client asks, ideas as coding tasks |
 | `proof/evaluate.py` | `proof eval`: scores models with the checks, compares with the last run |

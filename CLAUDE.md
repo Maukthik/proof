@@ -11,7 +11,7 @@ application/proposal gets rewritten from scratch.
 ## Layout
 Everything is in the `proof/` package (installed as the `proof` command via `pyproject.toml`).
 - `proof/cli.py`: CLI with `case`, `scan`, `check`, `pitch`, `lint`, `profile`, `site`, `log`, `apply`,
-  `followup`, `prep`, `suggest`, `eval`, `dataset`
+  `followup`, `prep`, `doctor`, `suggest`, `eval`, `dataset`
 - `proof/casestudy.py`: one case study: draft -> lint checks -> one repair round (prompts.REVISE) -> source links
 - `proof/claims.py`: links each Results line to the README line stating the same numbers the same way
 - `proof/diagram.py`: arrows between real files must be backed by an import (else dashed); boxes get click links
@@ -34,6 +34,9 @@ Everything is in the `proof/` package (installed as the `proof` command via `pyp
 - `proof/apply.py`: `proof apply`: fit = a project shares 2+ real techs (not COMMON_TOOLS) and
   your projects show 1/3+ of what the job names; seen.json; daily digest. Never sends anything
 - `proof/portfolio.py`: static portfolio page (Python-Markdown + Mermaid via CDN)
+- `proof/doctor.py`: `proof doctor`: ok/warn/FAIL for setup, model (+ one test prompt), each job
+  board read fresh (warns if a reader finds no jobs or jobs without title/link/text: format
+  changed), case studies, pitch log. Ask Mauk for its output first when something breaks
 - `proof/suggest.py`: what to build next: client-readiness checklist, techs clients asked for (pitch
   log `job_tech`), model ideas turned into coding-assistant tasks
 - `proof/evaluate.py`: `proof eval`: repo x model, scored by lint checks only, compared with the last run
@@ -116,7 +119,7 @@ through lint_followup / lint_prep (numbers, flips, unknown files, "just checking
 2. Try the templates for real: a `portfolio` repo with repos.txt, Pages on, one ping from doppel.
 3. Run the fine-tuning loop for real (training/README.md): teacher data on Groq/Anthropic,
    Kaggle training, then `proof eval` old vs fine-tuned. Fix train_lora.py if Unsloth/TRL renamed things.
-4. Run `proof apply` against the LIVE boards on Mauk's laptop (the sandbox couldn't reach them):
+4. Get `proof doctor` output from Mauk's laptop, then run `proof apply` against the LIVE boards (the sandbox couldn't reach them):
    check each reader still parses, and that fits look right on real posts. Then prompts for
    followup/prep (prompts.FOLLOW_UP, prompts.PREP) on a real model.
 5. Learn from the pitch log: feed the best-replying projects/angles back into the pitch prompt.

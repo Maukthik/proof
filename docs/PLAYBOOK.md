@@ -99,6 +99,14 @@ For each new PowerShell window, pick the model (or pass `--provider` / `--model`
 $env:PROOF_PROVIDER="ollama"; $env:PROOF_MODEL="llama3.1:8b-instruct-q4_K_M"
 ```
 
+Then check everything works - Python, git, the model (it sends one test prompt), every
+job board, your case studies and pitch log:
+```powershell
+py -m proof doctor
+```
+Every line is `ok`, `warn` or `FAIL` with the fix next to it. If something's wrong that
+you can't fix, paste the whole output when asking for help.
+
 ---
 
 ## Part 3 - Choose how case studies get written
@@ -264,6 +272,8 @@ Use the model with the fewest problems after repair. When you have 50+ trusted e
 - **Quote `"@list.txt"`** in PowerShell; `@` on its own means something else there.
 
 ## Troubleshooting
+
+Start with `py -m proof doctor`: it checks all of the below in one go.
 
 | Problem | Fix |
 |---|---|

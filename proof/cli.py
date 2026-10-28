@@ -12,6 +12,7 @@ Commands:
   apply   [BOARD ...]       new jobs from job boards that fit your projects, + pitch drafts
   followup PITCH            a short follow-up for a pitch that got no reply
   prep    PITCH|JOB         a brief for the client call: likely questions, gaps, intro
+  doctor                    check that everything works (paste its output when asking for help)
 
 Examples:
   proof case https://github.com/you/doppel ./rag-chatbot --provider ollama
@@ -35,7 +36,7 @@ from .apply import (board_name, console_lines, digest, find_fits, headline, is_r
 from .facts import fingerprint, read_facts, start_facts_file
 from .feeds import BOARDS, CACHE_HOURS, DEFAULT_BOARDS, FeedError, read_board
 from .jobpost import read_job, slug
-from . import casestudy, dataset, evaluate, suggest
+from . import casestudy, dataset, doctor, evaluate, suggest
 from .lint import lint_followup, lint_pitch, lint_prep, print_problems, unsupported_numbers
 from .llm import DEFAULT_MODELS, ask_llm, scan_budget, strip_wrapper
 from .match import COMMON_TOOLS, rank_projects, tech_in
@@ -608,6 +609,11 @@ def cmd_log(args):
     print(report(load_log(args.out)))
 
 
+def cmd_doctor(args):
+    failures = doctor.run(args.out, args.provider, args.model, args.boards, args.offline)
+    sys.exit(1 if failures else 0)
+
+
 # ---------------------------------------------------------------------------
 # Command-line setup
 # ---------------------------------------------------------------------------
@@ -693,6 +699,12 @@ def main(argv=None):
     p.add_argument("--top", type=int, default=2, help="Projects to use, for a job post")
     p.add_argument("--no-ai", action="store_true", help="Only the fit and the gaps")
     p.set_defaults(func=cmd_prep)
+
+    p = sub.add_parser("doctor", parents=[common], help="Check that everything proof needs works")
+    p.add_argument("boards", nargs="*", metavar="BOARD",
+                   help=f"Job boards to test (default: {' '.join(DEFAULT_BOARDS)})")
+    p.add_argument("--offline", action="store_true", help="Skip the model test and job boards")
+    p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("lint", parents=[common], help="Check a pitch")
     p.add_argument("pitch", help="Pitch text file")

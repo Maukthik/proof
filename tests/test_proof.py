@@ -297,7 +297,10 @@ class FakeAPI(BaseHTTPRequestHandler):
     def do_GET(self):
         page = {"/jobs/fastapi-dev": JOB_PAGE,
                 "/login-wall": "<html><body><h1>Please log in</h1></body></html>",
-                "/jobs.rss": todays_feed()}
+                "/jobs.rss": todays_feed(),
+                "/broken.rss": "<rss><channel><item><title>Job</title></item>"
+                               "<item><title>Job 2</title></item></channel></rss>",
+                "/api/tags": json.dumps({"models": [{"name": "qwen2.5-coder:7b"}]})}
         self.reply(200, page.get(self.path, "not found").encode(), "text/html")
 
     def reply(self, status, data, content_type):
@@ -1567,3 +1570,43 @@ def test_followup_and_prep_commands(repos, tmp_path):
     (tmp_path / "other.txt").write_text("React Tailwind storefront")
     code, out = run("prep", "other.txt", "--no-ai", "--provider", "mock", cwd=tmp_path)
     assert code == 0 and "Projects to talk about: shop-ui" in out and "## What they need" not in out
+
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+def test_doctor_all_good(repos, tmp_path, fake_api):
+    run("case", str(repos["rag"]), "--provider", "mock", cwd=tmp_path)
+    code, out = run("doctor", fake_api + "/jobs.rss", "--provider", "mock", cwd=tmp_path)
+    assert code == 0, out
+    assert "127.0.0.1:" in out and "2 jobs" in out
+    assert "1 case studies: rag-bot (" in out and "0 problem(s)" in out
+
+
+def test_doctor_model_checks(fake_api, monkeypatch):
+    from proof import doctor
+    monkeypatch.setenv("OLLAMA_URL", fake_api)
+    checks = doctor.model_checks("ollama", "qwen2.5-coder:7b", offline=False)
+    assert [level for level, _ in checks] == ["ok", "ok", "ok"]
+    assert "test prompt answered" in checks[-1][1]
+    level, text = doctor.model_checks("ollama", "llama3.1:8b", offline=False)[-1]
+    assert level == "FAIL" and "Installed: qwen2.5-coder:7b" in text
+    monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:9")            # nothing listens there
+    assert "start the Ollama app" in doctor.model_checks("ollama", "x", offline=False)[0][1]
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    assert doctor.model_checks("openai", "m", offline=False)[0][0] == "FAIL"
+    assert doctor.model_checks("openai", "", offline=False)[0][1].startswith("no model")
+
+
+def test_doctor_spots_broken_boards_and_log(tmp_path, fake_api):
+    from proof import doctor
+    level, text = doctor.board_checks([fake_api + "/broken.rss"])[0]
+    assert level == "warn" and "format may have changed" in text
+    assert doctor.board_checks(["nope"])[0][0] == "FAIL"
+    log = tmp_path / "pitches" / "log.json"
+    log.parent.mkdir()
+    log.write_text("{broken")
+    assert doctor.log_checks(tmp_path)[0][0] == "FAIL"
+    log.write_text(json.dumps({"x": {"status": "sent", "sent": "2026-01-01"}}))
+    assert "proof followup x" in doctor.log_checks(tmp_path)[1][1]
