@@ -29,7 +29,7 @@ from pathlib import Path
 
 from .facts import fingerprint, read_facts, start_facts_file
 from .jobpost import read_job
-from . import casestudy
+from . import casestudy, evaluate
 from .lint import lint_pitch, print_problems, unsupported_numbers
 from .llm import DEFAULT_MODELS, ask_llm, scan_budget, strip_wrapper
 from .match import rank_projects
@@ -134,6 +134,16 @@ def was_edited(case_file, meta):
 def load_meta(out_dir):
     meta_file = out_dir / "meta.json"
     return json.loads(meta_file.read_text(encoding="utf-8")) if meta_file.exists() else {}
+
+
+def cmd_eval(args):
+    missing = [arg for arg in args.repos if not is_url(arg) and not Path(arg).expanduser().is_dir()]
+    if missing:
+        sys.exit("Not a folder: " + ", ".join(missing))
+    models = args.models or [args.model]
+    with tempfile.TemporaryDirectory(prefix="proof_") as clone_dir:
+        evaluate.run(args.repos, models, args.provider, args.out,
+                     args.scan_chars or scan_budget(args.provider), clone_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +307,12 @@ def main(argv=None):
                         "Set it to make training data for a smaller model's context.")
     p.set_defaults(func=cmd_case)
 
+    p = sub.add_parser("eval", parents=[common], help="Score models on writing case studies")
+    p.add_argument("repos", nargs="+", help="Local folders or GitHub URLs")
+    p.add_argument("--models", nargs="+", help="Models to compare (default: --model)")
+    p.add_argument("--scan-chars", type=int, default=None, help="How much of each repo to show")
+    p.set_defaults(func=cmd_eval)
+
     p = sub.add_parser("pitch", parents=[common], help="Write a pitch for a job post")
     p.add_argument("job", help="Job post: a text file, a URL, or - to paste it")
     p.add_argument("--top", type=int, default=2, help="How many projects to use")
@@ -324,7 +340,8 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     args.model = args.model or DEFAULT_MODELS[args.provider]
-    calls_llm = args.command in ("case", "pitch", "profile") and not getattr(args, "dry_run", False)
+    calls_llm = (args.command in ("case", "pitch", "profile", "eval")
+                 and not getattr(args, "dry_run", False) and not getattr(args, "models", None))
     if calls_llm and not args.model:
         sys.exit("Pick a model with --model or PROOF_MODEL.")
     args.func(args)

@@ -1062,3 +1062,44 @@ def test_web_url_and_pushed_commit(tmp_path):
                     "git@github.com:me/app.git"], check=True)
     assert web_url(str(repo), repo) == "https://github.com/me/app"
     assert pushed_commit(repo) == "HEAD"                            # not on any remote yet
+
+
+# ---------------------------------------------------------------------------
+# proof eval
+# ---------------------------------------------------------------------------
+
+def test_eval_scores_models_and_compares_with_last_run(repos, tmp_path, monkeypatch, capsys):
+    from proof import casestudy, evaluate
+    clean = ("# rag-bot - answers questions over PDFs\n## The problem\nSupport teams answer the "
+             "same PDF questions all day.\n## What I built\nA chatbot.\n## How it works\nA FastAPI "
+             "app.\n```mermaid\nflowchart TD\nA[\"API (app/main.py)\"]\n```\n## Tech stack\n- "
+             "FastAPI\n## Engineering highlights\n- `app/main.py` serves the API.\n## Results\n"
+             "- [add: users]\n## Skills shown\nFastAPI\n")
+    invented = clean.replace("`app/main.py` serves", "`sync/queue.py` retries")
+    replies = {"good-model": clean, "bad-model": invented}
+    monkeypatch.setattr(casestudy, "ask_llm", lambda prompt, provider, model: replies[model])
+
+    out = tmp_path / "out"
+    rows = evaluate.run([str(repos["rag"])], ["good-model", "bad-model"], "openai", out, 70_000,
+                        tmp_path / "clones")
+    assert [len(r["problems"]) for r in rows] == [0, 1]
+    printed = capsys.readouterr().out
+    assert "bad-model                    rag-bot" in printed and "invented files x1" in printed
+    assert "good-model: 0 problems in drafts, 0 after repair, 1/1 clean" in printed
+
+    run_dir = next((out / "eval").iterdir())
+    assert (run_dir / "prompts" / "rag-bot.txt").exists()
+    assert "sync/queue.py" in (run_dir / "bad-model" / "rag-bot" / "draft.md").read_text()
+    assert json.loads((run_dir / "results.json").read_text())[1]["model"] == "bad-model"
+
+    time.sleep(1.1)                                   # a new eval folder (named by the second)
+    replies["bad-model"] = clean                      # e.g. after a prompt fix
+    evaluate.run([str(repos["rag"])], ["bad-model"], "openai", out, 70_000, tmp_path / "c2")
+    assert "(last eval: 1 after repair - better)" in capsys.readouterr().out
+
+
+def test_problem_kinds():
+    from proof.evaluate import kind_of
+    assert kind_of("files that aren't in the repo: a.py - name only real files") == "invented files"
+    assert kind_of("22, 37: meaning may be turned around - the repo says") == "flipped number"
+    assert kind_of("something new") == "other"
