@@ -1284,3 +1284,56 @@ def test_files_that_dont_fit_are_outlined(tmp_path):
              for i in range(20)}
     text = scan_repo(make_repo(tmp_path, "big", files), budget=20_000)
     assert "# Outlines of other main files" in text and "def handler_19(request)" in text
+
+
+# ---------------------------------------------------------------------------
+# Diagrams checked against the imports (an idea from gitdiagram)
+# ---------------------------------------------------------------------------
+
+DIAGRAM = '''# X
+```mermaid
+flowchart TD
+    U["User"] --> A["CLI (doppel/cli.py)"]
+    A --> B["Runner (doppel/runner.py)"] --> C["Diff (doppel/diff.py)"]
+    C -->|"feeds"| D["Report (src/doppel/report.py)"]
+    B --> E["Ghost (doppel/ghost.py)"]
+    D --> L["Shared code (src/lib/)"]
+```
+'''
+DIAGRAM_FILES = ["src/doppel/cli.py", "src/doppel/runner.py", "src/doppel/diff.py",
+                 "src/doppel/report.py", "src/lib/util.py"]
+DIAGRAM_EDGES = [("src/doppel/cli.py", "src/doppel/runner.py"),
+                 ("src/doppel/report.py", "src/doppel/diff.py"),
+                 ("src/doppel/report.py", "src/lib/util.py")]
+
+
+def test_diagram_arrows_need_an_import():
+    from proof.diagram import check_and_link
+    out, dashed = check_and_link(DIAGRAM, DIAGRAM_FILES, DIAGRAM_EDGES)
+    assert dashed == 1
+    assert 'A --> B["Runner (doppel/runner.py)"] -.-> C' in out     # runner never imports diff
+    assert 'C -->|"feeds"| D' in out                                # report imports diff
+    assert 'D --> L["Shared code (src/lib/)"]' in out              # a folder counts
+    assert 'B --> E["Ghost' in out and 'U["User"] --> A' in out    # not two real files: kept
+    assert "click" not in out                                       # no web address: no links
+
+
+def test_diagram_boxes_link_to_their_files():
+    from proof.diagram import check_and_link
+    out, _ = check_and_link(DIAGRAM, DIAGRAM_FILES, DIAGRAM_EDGES, "https://github.com/me/x", "c1")
+    assert 'click B "https://github.com/me/x/blob/c1/src/doppel/runner.py" _blank' in out
+    assert 'click L "https://github.com/me/x/tree/c1/src/lib/" _blank' in out
+    assert "click E " not in out and "click U " not in out          # not real files
+    again, _ = check_and_link(out, DIAGRAM_FILES, DIAGRAM_EDGES, "https://github.com/me/x", "c1")
+    assert again.count("click B ") == 1                             # running twice adds nothing
+
+
+def test_portfolio_turns_click_lines_into_links():
+    from proof.portfolio import to_html
+    md = ('```mermaid\nflowchart TD\n    A["CLI (cli.py)"] -.-> B\n'
+          '    click A "https://github.com/me/x/blob/c/cli.py" _blank\n'
+          '    click B "javascript:alert(1)" _blank\n```\n')
+    page = to_html(md)
+    assert "data-links=" in page and "https://github.com/me/x/blob/c/cli.py" in page
+    assert "click A" not in page and "javascript:" not in page.split("data-links=")[1][:200]
+    assert "Click a box to see its code." in page and "Dashed arrows" in page

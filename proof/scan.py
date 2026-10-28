@@ -405,7 +405,8 @@ def scan_repo(repo, budget=MAX_TOTAL_CHARS, removed=None):
         parts.append(f"# File: {f}\n```\n{clean(text, f)}\n```")
         used += len(text)
 
-    skeletons = outlines([f for f in not_read if not is_side_folder(f)], repo, outline_budget, clean)
+    main_not_read = [f for f in not_read if not is_side_folder(f)]
+    skeletons = outlines(main_not_read, repo, outline_budget, clean)
     if skeletons:
         parts.append("# Outlines of other main files (signatures only, bodies not shown):\n"
                      + skeletons)

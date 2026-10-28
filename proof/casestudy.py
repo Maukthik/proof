@@ -1,14 +1,17 @@
 """
-casestudy.py - write one case study: draft, check, repair, link claims to their sources.
+casestudy.py - write one case study: draft, check, repair, then link claims and diagram.
 
 Used by `proof case` (writes it to proof_output/) and `proof eval` (scores it).
+After the checks, finish() adds source links to results and checks the diagram.
 """
 
 from .claims import add_source_links
+from .codemap import internal_imports
+from .diagram import check_and_link
 from .lint import check_case_study
 from .llm import ask_llm, drop_preamble, fix_mermaid, strip_wrapper
 from .prompts import CASE_STUDY, REVISE
-from .scan import git_stats, list_files, readme_text
+from .scan import git_stats, is_side_folder, list_files, read_text, readme_text
 
 
 def build_prompt(repo_scan, facts):
@@ -60,14 +63,20 @@ def write(repo, repo_scan, facts, provider, model, say=print):
     return result
 
 
-def link_sources(case_study, repo, facts, repo_url, commit):
-    """Results numbers -> links to the README line they come from (see claims.py)."""
-    files = [f.as_posix() for f in list_files(repo)]
-    readmes = sorted((f for f in files if f.split("/")[-1].lower().startswith("readme")),
+def finish(case_study, repo, facts, repo_url, commit):
+    """After the checks: link Results lines to their README source (claims.py), and check
+    the diagram's arrows against the imports and link its boxes to the files (diagram.py).
+    Returns (case study, number of arrows drawn dashed because no import backs them)."""
+    files = list_files(repo)
+    names = [f.as_posix() for f in files]
+    readmes = sorted((f for f in names if f.split("/")[-1].lower().startswith("readme")),
                      key=lambda f: f.count("/"))
     readme_path = readmes[0] if readmes else None
-    return add_source_links(case_study, readme_text(repo, files), readme_path, facts,
-                            repo_url, commit)
+    case_study = add_source_links(case_study, readme_text(repo, names), readme_path, facts,
+                                  repo_url, commit)
+    main_files = [f for f in files if not is_side_folder(f)]
+    edges = internal_imports(repo, main_files, read_text)
+    return check_and_link(case_study, names, edges, repo_url, commit)
 
 
 def bullets(lines):

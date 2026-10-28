@@ -56,11 +56,31 @@ def fix_lists(md_text):
 def to_html(md_text):
     """Markdown -> HTML, with ```mermaid blocks turned into diagrams."""
     body = markdown.markdown(fix_lists(md_text), extensions=["fenced_code", "tables"])
-    body = re.sub(r'<pre><code class="language-mermaid">(.*?)</code></pre>',
-                  r'<pre class="mermaid">\1</pre>', body, flags=re.DOTALL)
+    body = re.sub(r'<pre><code class="language-mermaid">(.*?)</code></pre>', diagram_html,
+                  body, flags=re.DOTALL)
     # Make unfilled placeholders impossible to miss
     body = re.sub(r"\[add:[^\]]*\]", lambda m: f"<mark>{m.group(0)}</mark>", body)
     return body
+
+
+# `click A "https://..." _blank` lines that diagram.py adds (HTML-escaped by now)
+CLICK_LINE = re.compile(r'^\s*click (\w+) (?:&quot;|")(https://[^"&]+)(?:&quot;|").*$\n?',
+                        re.MULTILINE)
+
+
+def diagram_html(match):
+    """A Mermaid block, with its box links moved into data-links. Mermaid's own links need
+    its 'loose' security mode, which would also let a label carry HTML; so the page's
+    script adds the links after drawing, and only https ones."""
+    source = match.group(1)
+    links = dict(CLICK_LINE.findall(source))                  # https links only
+    source = re.sub(r"^\s*click\s.*$\n?", "", source, flags=re.MULTILINE)   # drop them all
+    data = f" data-links='{html.escape(json.dumps(links))}'" if links else ""
+    notes = (["Click a box to see its code."] if links else []) + \
+        (["Dashed arrows: described, but not shown by an import in the code."]
+         if "-.-&gt;" in source or "-.->" in source else [])
+    caption = f'<p class="diagram-note">{" ".join(notes)}</p>' if notes else ""
+    return f'<pre class="mermaid"{data}>{source}</pre>{caption}'
 
 
 # Tools every project has, or that no client searches for: shown after the rest
@@ -141,6 +161,7 @@ PAGE = """<!doctype html>
   pre.mermaid {{ background:transparent; text-align:center; }}
   mark {{ background: var(--mark); color: inherit; padding: 0 3px; border-radius: 3px; }}
   a[href*="/blob/"] {{ font-size: .75em; color: var(--muted); }}   /* claim source links */
+  .diagram-note {{ text-align: center; font-size: .8rem; color: var(--muted); margin-top: -4px; }}
   a {{ color: var(--accent); }}
   .top {{ font-size:.85rem; }}
   .contact {{ margin-top: 8px !important; }}
@@ -176,7 +197,25 @@ PAGE = """<!doctype html>
         }}
       }}
       await mermaid.run({{ querySelector: "pre.mermaid" }});
+      linkBoxes();
     }})();
+  }}
+
+  // Boxes that name a real file open it on GitHub (links from diagram.py, https only)
+  function linkBoxes() {{
+    for (const diagram of document.querySelectorAll("pre.mermaid[data-links]")) {{
+      const links = JSON.parse(diagram.dataset.links);
+      for (const [id, url] of Object.entries(links)) {{
+        if (!url.startsWith("https://")) continue;
+        const box = diagram.querySelector(`g.node[id^="flowchart-${{id}}-"]`);
+        if (!box) continue;
+        box.style.cursor = "pointer";
+        box.addEventListener("click", () => window.open(url, "_blank", "noopener"));
+        const tip = document.createElementNS("http://www.w3.org/2000/svg", "title");
+        tip.textContent = "Open the code on GitHub";
+        box.prepend(tip);
+      }}
+    }}
   }}
 </script>
 </body>

@@ -110,8 +110,8 @@ def write_case_study(repo_arg, clone_dir, args):
     result = casestudy.write(repo, repo_scan, facts, args.provider, args.model,
                              say=lambda message: print(f"[{name}] {message}"))
     commit = head_commit(repo)
-    case_study = casestudy.link_sources(result["case_study"], repo, facts,
-                                        web_url(repo_arg, repo), pushed_commit(repo))
+    case_study, dashed = casestudy.finish(result["case_study"], repo, facts,
+                                          web_url(repo_arg, repo), pushed_commit(repo))
 
     # Never overwrite a case study you edited: put the new one next to it instead
     edited = was_edited(out_dir / "case_study.md", meta)
@@ -130,6 +130,9 @@ def write_case_study(repo_arg, clone_dir, args):
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     report_case_study(name, target, case_study, edited, result["problems"])
+    if dashed:
+        print(f"[{name}]   {dashed} diagram arrow(s) aren't backed by an import in the code: "
+              f"drawn dashed (fine for HTTP calls or README-documented flows)")
     if start_facts_file(out_dir, name, case_study):
         print(f"[{name}] started {out_dir / 'facts.md'} - fill in the real numbers there, "
               f"then run this again to close the gaps")
