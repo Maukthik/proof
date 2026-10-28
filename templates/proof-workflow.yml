@@ -1,0 +1,57 @@
+# GitHub Action: rewrite docs/CASE_STUDY.md whenever you push to main.
+#
+# Setup (once per repo):
+#   1. Copy this file to .github/workflows/proof.yml in the project repo
+#   2. Change PROOF_TOOL_REPO below to wherever you pushed the proof tool
+#   3. Repo Settings -> Secrets and variables -> Actions:
+#        secrets:   OPENAI_BASE_URL, OPENAI_API_KEY   (e.g. OpenRouter / Groq free tier)
+#        variables: PROOF_MODEL                       (a model id from that service)
+
+name: Update case study
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "**.md"]   # don't re-run (and spend tokens) on doc-only changes
+  workflow_dispatch: {}                  # adds a "Run workflow" button
+
+permissions:
+  contents: write                        # needed to commit the case study back
+
+env:
+  PROOF_TOOL_REPO: https://github.com/YOUR_USERNAME/proof.git
+
+jobs:
+  case-study:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                 # full history, for the commit stats
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Get the proof tool
+        run: |
+          git clone --depth 1 "$PROOF_TOOL_REPO" /tmp/proof
+          pip install -r /tmp/proof/requirements.txt
+
+      - name: Write case study
+        env:
+          PROOF_PROVIDER: openai
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PROOF_MODEL: ${{ vars.PROOF_MODEL }}
+        run: |
+          python /tmp/proof/proof.py case . --out /tmp/out
+          mkdir -p docs
+          cp /tmp/out/*/case_study.md docs/CASE_STUDY.md
+
+      - name: Commit if it changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/CASE_STUDY.md
+          git diff --cached --quiet || (git commit -m "Update case study" && git push)

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maukthik J - Projects</title>
+<style>
+  :root { --bg:#fafaf9; --card:#ffffff; --text:#1c1917; --muted:#57534e;
+          --border:#e7e5e4; --accent:#2563eb; --chip:#eff6ff; --mark:#fef08a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0c0a09; --card:#1c1917; --text:#f5f5f4; --muted:#a8a29e;
+            --border:#292524; --accent:#60a5fa; --chip:#1e293b; --mark:#854d0e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 48px 16px; }
+  header h1 { font-size: 2.2rem; margin: 0 0 4px; }
+  header p { color: var(--muted); margin: 0; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px,1fr));
+          gap:16px; margin: 32px 0 56px; }
+  .card { display:block; background:var(--card); border:1px solid var(--border);
+          border-radius:12px; padding:18px; color:inherit; text-decoration:none;
+          transition: border-color .15s; }
+  .card:hover { border-color: var(--accent); }
+  .card h3 { margin:0 0 6px; }
+  .card p { margin:0 0 12px; color:var(--muted); font-size:.95rem; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { background:var(--chip); color:var(--accent); border-radius:999px;
+          padding:2px 10px; font-size:.8rem; }
+  article { background:var(--card); border:1px solid var(--border); border-radius:12px;
+            padding: 8px 28px 24px; margin-bottom: 32px; overflow-wrap: anywhere; }
+  article h1 { font-size: 1.6rem; }
+  article h2 { font-size: 1.15rem; margin-top: 28px; }
+  pre { overflow-x:auto; }
+  pre.mermaid { background:transparent; text-align:center; }
+  mark { background: var(--mark); color: inherit; padding: 0 3px; border-radius: 3px; }
+  a { color: var(--accent); }
+  .top { font-size:.85rem; }
+  .contact { margin-top: 8px !important; }
+  @media (max-width: 600px) { article { padding: 4px 16px 18px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Maukthik J</h1>
+    <p>1 project - what I built, how it works, and what I learned.</p>
+    <p class="contact">github.com/maukthik</p>
+  </header>
+  <div class="grid">
+<a class="card" href="#doppel">
+  <h3>Doppel</h3>
+  <p>a GitHub check that runs every pull request against main and proves each regression</p>
+  <div class="chips"><span class='chip'>GitHub Actions</span><span class='chip'>Nebius ConTree</span><span class='chip'>OpenAI SDK</span><span class='chip'>Python</span><span class='chip'>pytest</span></div>
+</a>
+  </div>
+<article id="doppel"><h1>Doppel - a GitHub check that runs every pull request against main and proves each regression</h1>
+<h2>The problem</h2>
+<p>Tests check only what someone thought to assert; reviewers read the diff and guess. A one-line schema change in microblog-api, a well-tested Flask app, leaked every user's password hash, yet all 44 tests passed and an AI code review called it "safe". Teams need to see what a PR actually <em>does</em> before it merges.</p>
+<h2>What I built</h2>
+<p>Doppel is a GitHub Action for Flask, Django and FastAPI apps. On every pull request it:</p>
+<ul>
+<li>runs the old and new versions of the app side by side in sandboxes and sends the same requests to both</li>
+<li>compares every response and shows each change as evidence: the request, the old answer and the new answer</li>
+<li>asks an AI judge whether each change is announced in the PR description, so reviewers see only the changes nobody mentioned</li>
+<li>posts one comment on the PR and fails the check when it finds a regression, with a full check page behind it</li>
+</ul>
+<p>Test mode needs no setup: it finds the test command in <code>tox.ini</code>, CI, a Makefile or a noxfile.</p>
+<h2>How it works</h2>
+<p><code>doppel check</code> runs two modes at once. <strong>Test mode</strong> rides the app's own test suite on base, base again (to learn what is noise) and head, and records every request. The <strong>guided twin</strong> has an AI reviewer list what the PR might break, then Nemotron invents users that probe those spots and replays them in both worlds. A coverage-style tracer confirms the users actually reached the changed lines. Findings from both modes are grouped, judged against the PR description, and turned into one report.</p>
+<pre class="mermaid">flowchart TD
+  PR[&quot;Pull request&quot;] --&gt; GA[&quot;GitHub Action&quot;]
+  GA --&gt; TM[&quot;Test mode: app's own tests&quot;]
+  GA --&gt; TW[&quot;Guided twin: AI-invented users&quot;]
+  TM --&gt; SB[&quot;Nebius sandboxes: base vs head&quot;]
+  TW --&gt; SB
+  SB --&gt; DF[&quot;Diff every response&quot;]
+  DF --&gt; JG[&quot;Nemotron judge vs PR description&quot;]
+  JG --&gt; OUT[&quot;PR comment + check page&quot;]
+</pre>
+<h2>Tech stack</h2>
+<ul>
+<li><strong>Language:</strong> Python 3.11+, mostly standard library</li>
+<li><strong>Infra/DevOps:</strong> GitHub Actions (published action), Nebius ConTree sandboxes, a local process backend, GitHub REST API</li>
+<li><strong>AI/ML:</strong> NVIDIA Nemotron models (via the OpenAI SDK) for persona generation, PR review, setup repair and judging</li>
+<li><strong>Testing:</strong> pytest, ruff; benchmark workflows run on GitHub runners</li>
+</ul>
+<h2>Engineering highlights</h2>
+<ul>
+<li><strong>Noise calibration:</strong> in test mode, base runs twice, so any field that differs between two identical runs (timestamps, ids) is ignored instead of reported (<code>traffic.py</code>, <code>bootstrap.py</code>).</li>
+<li><strong>Proof of reach:</strong> <code>reach.py</code> injects a <code>sitecustomize.py</code> tracer that records whether any user executed the changed lines, so "no differences" is only claimed when the changed code actually ran.</li>
+<li><strong>Self-healing setup:</strong> <code>doppel init</code> drafts the config with Nemotron, boots the app and feeds failures back; if drafts keep failing, a bounded agent (<code>agent.py</code>, max 20 steps) sets it up in a live sandbox.</li>
+<li><strong>Ground truth over guessing:</strong> <code>probe_app.py</code> imports the app as its framework would and reports real routes, database and login flow to the model.</li>
+<li><strong>Cheap judging:</strong> identical changes are grouped, so the judge rules once per distinct change.</li>
+</ul>
+<h2>Results</h2>
+<ul>
+<li>On a 30-PR benchmark (20 regressions, 10 safe): Doppel caught <strong>17/20</strong> regressions. <strong>Tests + Doppel caught 20/20</strong>, against 12/20 for the test suite alone. That is about $0.25 and 89 s per PR, with 2/10 false alarms.</li>
+<li>On 10 held-out PRs written after tuning: Doppel caught <strong>7/7</strong> with <strong>0/3</strong> false alarms.</li>
+<li>Zero-setup runs on 30 real open-source apps: it worked on up to 8/10 per set, ran up to 10,214 tests per app, and produced <strong>0 false differences</strong>.</li>
+<li>Live demo PR: flagged the password-hash leak in 38 requests in about a minute, while all 44 tests passed.</li>
+</ul>
+<h2>Skills shown</h2>
+<p>Python, GitHub Actions, CI/CD, DevOps, LLM agents, AI evaluation, sandboxed execution, regression testing, FastAPI, Django, API testing, developer tools</p><a class="top" href="#">Back to top</a></article>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  if (window.mermaid) {
+    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "default" });
+  }
+</script>
+</body>
+</html>
