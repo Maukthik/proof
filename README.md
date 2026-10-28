@@ -28,6 +28,9 @@ It never invents results. Missing facts become `[add: ...]` gaps, every number i
 text is checked against your repo and your own notes, and each result in a case study links
 to the README line it comes from.
 
+**New here? Read [docs/PLAYBOOK.md](docs/PLAYBOOK.md)** - every feature in plain words and
+the full workflow, from first run to won job.
+
 ## Install
 
 ```bash
@@ -184,6 +187,7 @@ so a quiet day costs no LLM calls.
 | `proof/dataset.py` | Fine-tuning data from case studies we trust |
 | `training/` | Fine-tuning kit: public repo list, Kaggle training script, Ollama Modelfile, guide |
 | `agents/proof-case-study/` | Skill file: how a coding agent writes case studies with proof |
+| `docs/PLAYBOOK.md` | How to use everything, step by step |
 | `docs/COMPARISON.md` | proof next to REA, gitdiagram, aider, repomix, DeepWiki, portfolio and proposal tools |
 | `templates/` | GitHub Actions (see above) |
 | `tools/survey.py` | Dev check: what the model would see, across many repos |
