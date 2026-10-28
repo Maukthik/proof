@@ -1,0 +1,10 @@
+# Turns the trained GGUF into an Ollama model:
+#   ollama create proof-llama -f Modelfile
+# Put this file next to the .gguf and fix the file name below if yours differs.
+# If Unsloth wrote its own Modelfile next to the GGUF, prefer that one: it carries the
+# exact chat template. Recent Ollama versions also read the template from the GGUF itself.
+
+FROM ./unsloth.Q4_K_M.gguf
+
+PARAMETER temperature 0.3
+PARAMETER num_ctx 16384

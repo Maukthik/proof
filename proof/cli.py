@@ -29,7 +29,7 @@ from pathlib import Path
 
 from .facts import fingerprint, read_facts, start_facts_file
 from .jobpost import read_job
-from . import casestudy, evaluate
+from . import casestudy, dataset, evaluate
 from .lint import lint_pitch, print_problems, unsupported_numbers
 from .llm import DEFAULT_MODELS, ask_llm, scan_budget, strip_wrapper
 from .match import rank_projects
@@ -44,7 +44,25 @@ from .tracker import STATUSES, load_log, record_pitch, report, update_status
 # case
 # ---------------------------------------------------------------------------
 
+def expand_repo_lists(repo_args):
+    """'@training/repos.txt' -> the repos listed in that file (one per line, # comments)."""
+    repos = []
+    for arg in repo_args:
+        if not arg.startswith("@"):
+            repos.append(arg)
+            continue
+        list_file = Path(arg[1:])
+        if not list_file.is_file():
+            sys.exit(f"No such list of repos: {list_file}")
+        for line in list_file.read_text(encoding="utf-8").splitlines():
+            line = line.split("#")[0].strip()
+            if line:
+                repos.append(line)
+    return repos
+
+
 def cmd_case(args):
+    args.repos = expand_repo_lists(args.repos)
     # Catch a mistyped folder now, not after minutes of model work on the others
     missing = [arg for arg in args.repos if not is_url(arg) and not Path(arg).expanduser().is_dir()]
     if missing:
@@ -137,6 +155,7 @@ def load_meta(out_dir):
 
 
 def cmd_eval(args):
+    args.repos = expand_repo_lists(args.repos)
     missing = [arg for arg in args.repos if not is_url(arg) and not Path(arg).expanduser().is_dir()]
     if missing:
         sys.exit("Not a folder: " + ", ".join(missing))
@@ -144,6 +163,14 @@ def cmd_eval(args):
     with tempfile.TemporaryDirectory(prefix="proof_") as clone_dir:
         evaluate.run(args.repos, models, args.provider, args.out,
                      args.scan_chars or scan_budget(args.provider), clone_dir)
+
+
+def cmd_dataset(args):
+    folders = args.sources or [args.out]
+    examples = dataset.collect(folders, exclude=set(args.exclude or []))
+    if examples:
+        dataset.write(examples, args.to)
+    print(dataset.summary(examples, args.to))
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +326,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("case", parents=[common], help="Write case studies for repos")
-    p.add_argument("repos", nargs="+", help="Local folders or GitHub URLs")
+    p.add_argument("repos", nargs="+", help="Local folders, GitHub URLs, or @list.txt")
     p.add_argument("--force", action="store_true", help="Redo even if unchanged")
     p.add_argument("--dry-run", action="store_true", help="Save prompts, don't call the LLM")
     p.add_argument("--scan-chars", type=int, default=None,
@@ -308,10 +335,16 @@ def main(argv=None):
     p.set_defaults(func=cmd_case)
 
     p = sub.add_parser("eval", parents=[common], help="Score models on writing case studies")
-    p.add_argument("repos", nargs="+", help="Local folders or GitHub URLs")
+    p.add_argument("repos", nargs="+", help="Local folders, GitHub URLs, or @list.txt")
     p.add_argument("--models", nargs="+", help="Models to compare (default: --model)")
     p.add_argument("--scan-chars", type=int, default=None, help="How much of each repo to show")
     p.set_defaults(func=cmd_eval)
+
+    p = sub.add_parser("dataset", parents=[common], help="Fine-tuning data from good case studies")
+    p.add_argument("--from", dest="sources", nargs="+", help="Output folders (default: --out)")
+    p.add_argument("--to", default="training/data.jsonl", help="JSONL file to write")
+    p.add_argument("--exclude", nargs="+", help="Repos to keep out (e.g. the ones you eval on)")
+    p.set_defaults(func=cmd_dataset)
 
     p = sub.add_parser("pitch", parents=[common], help="Write a pitch for a job post")
     p.add_argument("job", help="Job post: a text file, a URL, or - to paste it")

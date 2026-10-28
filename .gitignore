@@ -1,3 +1,4 @@
 proof_output/
 __pycache__/
 .pytest_cache/
+training/data.jsonl

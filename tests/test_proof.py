@@ -1103,3 +1103,59 @@ def test_problem_kinds():
     assert kind_of("files that aren't in the repo: a.py - name only real files") == "invented files"
     assert kind_of("22, 37: meaning may be turned around - the repo says") == "flipped number"
     assert kind_of("something new") == "other"
+
+
+# ---------------------------------------------------------------------------
+# proof dataset (fine-tuning data)
+# ---------------------------------------------------------------------------
+
+def test_dataset_keeps_only_trusted_case_studies(repos, tmp_path, monkeypatch):
+    from proof import casestudy, cli
+    from proof.dataset import collect, summary, write
+    good = ("# x - y\n## The problem\nTeams answer PDF questions by hand.\n"
+            "## What I built\nA bot.\n"
+            "## How it works\nAn API.\n```mermaid\nflowchart TD\nA[\"API (app/main.py)\"]\n```\n"
+            "## Tech stack\n- FastAPI\n## Engineering highlights\n- `app/main.py` serves it.\n"
+            "## Results\n- [add: users]\n## Skills shown\nFastAPI\n")
+    bad = good.replace("app/main.py", "nope.py")
+    replies = iter([good, bad, bad])            # rag-bot clean; shop-ui bad even after repair
+    monkeypatch.setattr(casestudy, "ask_llm", lambda prompt, provider, model: next(replies))
+    monkeypatch.chdir(tmp_path)
+    cli.main(["case", str(repos["rag"]), "--provider", "openai", "--model", "m"])    # clean
+    cli.main(["case", str(repos["shop"]), "--provider", "openai", "--model", "m"])   # not clean
+    shop = tmp_path / "proof_output" / "shop-ui"
+    assert [e["repo"] for e in collect([tmp_path / "proof_output"])] == ["rag-bot"]
+
+    (shop / "case_study.md").write_text("# shop-ui - fixed by hand\n")              # you edit it
+    examples = collect([tmp_path / "proof_output"])
+    assert [(e["repo"], e["rank"]) for e in examples] == [("shop-ui", 1), ("rag-bot", 2)]
+    assert [e["repo"] for e in collect([tmp_path / "proof_output"], exclude={"shop-ui"})] \
+        == ["rag-bot"]
+
+    write(examples, tmp_path / "data.jsonl")
+    lines = [json.loads(line) for line in (tmp_path / "data.jsonl").read_text().splitlines()]
+    assert lines[1]["messages"][0]["content"].startswith("Below is a scan")
+    assert lines[1]["messages"][1]["content"] == good
+    assert "only 2 examples" in summary(examples, "data.jsonl")
+
+
+def test_dataset_strips_source_links():
+    from proof.dataset import without_links
+    text = ("## Results\n- Ran 10,214 tests. ([source](https://g/b/c/README.md#L8))\n"
+            "- 900 users (self-reported)\n- 3 apps (README.md line 4)\n")
+    assert without_links(text) == "## Results\n- Ran 10,214 tests.\n- 900 users\n- 3 apps\n"
+
+
+def test_repo_lists(repos, tmp_path):
+    (tmp_path / "list.txt").write_text(f"# my repos\n{repos['rag']}\n\n{repos['shop']}  # shop\n")
+    code, out = run("case", "@list.txt", "--provider", "mock", cwd=tmp_path)
+    assert code == 0 and "[rag-bot] saved" in out and "[shop-ui] saved" in out
+    code, out = run("case", "@missing.txt", "--provider", "mock", cwd=tmp_path)
+    assert code != 0 and "No such list of repos" in out
+
+
+def test_training_repo_list_is_valid():
+    from proof.cli import expand_repo_lists
+    repos = expand_repo_lists([f"@{TOOL / 'training' / 'repos.txt'}"])
+    assert len(repos) >= 30 and all(r.startswith("https://github.com/") for r in repos)
+    assert not any("maukthik" in r.lower() for r in repos)      # your repos are the test set
