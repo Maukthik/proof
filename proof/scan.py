@@ -304,6 +304,13 @@ def first_copies_first(files):
     return firsts + repeats
 
 
+def readme_text(repo, files):
+    """The whole top-level README ('' if there's none): where results are usually stated."""
+    readmes = sorted((f for f in files if Path(f).name.lower().startswith("readme")),
+                     key=lambda f: len(Path(f).parts))
+    return read_text(repo / readmes[0], limit=1_000_000) if readmes else ""
+
+
 def has_enough_to_write_about(repo, files):
     """A case study needs some code, or at least a real README. With neither, the model
     could only make things up."""

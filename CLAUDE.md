@@ -71,8 +71,18 @@ First real-model run (llama3.1:8b, doppel, 2026-10-28; saved in tests/fixtures/)
 no invented numbers, but (1) it turned "22 of 37 didn't run" into "caught 22 of 37", (2) generic
 problem text ("many developers struggle... daunting"), (3) highlights with no file names, (4) a zero
 result listed as an achievement, (5) project features in "Skills shown". Fixed with checks in lint.py
-(flipped numbers, vague highlights, filler) and bad/good examples in prompts.py. Next: rerun with
---force and see which of these the prompt changes fixed.
+(flipped numbers, vague highlights, filler) and bad/good examples in prompts.py.
+
+Second run: the 8B model COPIED the prompt's realistic examples into both case studies (a made-up
+`sync/queue.py`, "12 of 40 tests", `app/main.py`, "Small clinics...", skills list). Lessons:
+- Never put realistic example content in a prompt for small models. Use fill-in shapes only
+  (`<a real file from the scan>`), and say "the shapes show the form only".
+- Checks beat instructions. lint.py now also flags: files that aren't in the repo, text copied
+  from the prompt, Results numbers the README/facts don't state (code is full of numbers, so
+  "appears somewhere in the repo" proved nothing), named technologies the repo never mentions.
+- `proof case` sends the model ONE repair request listing the problems and keeps whichever
+  version has fewer (prompts.REVISE). Small models fix listed problems much better than they
+  avoid them.
 
 ## Next gaps to close (in priority order)
 1. Keep tuning `prompts.py` on Mauk's real repos with a real model (`proof case ... --force`). Save each

@@ -34,9 +34,9 @@ from .llm import (DEFAULT_MODELS, ask_llm, drop_preamble, fix_mermaid, scan_budg
                   strip_wrapper)
 from .match import rank_projects
 from .portfolio import build_site, load_case_studies
-from .prompts import CASE_STUDY, PITCH, PROFILE
-from .scan import (detect_stack, get_repo, has_enough_to_write_about, head_commit, is_url,
-                   list_files, remote_head, repo_name, scan_repo)
+from .prompts import CASE_STUDY, PITCH, PROFILE, REVISE
+from .scan import (detect_stack, get_repo, git_stats, has_enough_to_write_about, head_commit,
+                   is_url, list_files, readme_text, remote_head, repo_name, scan_repo)
 from .tracker import STATUSES, load_log, record_pitch, report, update_status
 
 
@@ -86,8 +86,18 @@ def write_case_study(repo_arg, clone_dir, args):
         return
 
     print(f"[{name}] writing case study with {args.provider}/{args.model} ...")
-    reply = ask_llm(prompt, args.provider, args.model)
-    case_study = fix_mermaid(drop_preamble(strip_wrapper(reply)))
+    case_study = draft(prompt, args)
+    context = review_context(repo, repo_scan, facts)
+    problems = review(case_study, context)
+    if problems:
+        # One repair round: small models fix a listed problem far better than they avoid it
+        print(f"[{name}] checks found {len(problems)} problem(s) - "
+              f"asking the model to fix them ...")
+        revised = draft(REVISE.format(repo_scan=repo_scan, facts=facts or "(none given)",
+                                      case_study=case_study, problems=bullets(problems)), args)
+        revised_problems = review(revised, context)
+        if len(revised_problems) < len(problems):
+            case_study, problems = revised, revised_problems
 
     # Never overwrite a case study you edited: put the new one next to it instead
     edited = was_edited(out_dir / "case_study.md", meta)
@@ -104,19 +114,44 @@ def write_case_study(repo_arg, clone_dir, args):
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
-    report_case_study(name, target, case_study, edited, sources=[repo_scan, facts])
+    report_case_study(name, target, case_study, edited, problems)
     if start_facts_file(out_dir, name, case_study):
         print(f"[{name}] started {out_dir / 'facts.md'} - fill in the real numbers there, "
               f"then run this again to close the gaps")
 
 
-def report_case_study(name, target, case_study, edited, sources):
+def draft(prompt, args):
+    """Ask the model, and tidy what comes back."""
+    return fix_mermaid(drop_preamble(strip_wrapper(ask_llm(prompt, args.provider, args.model))))
+
+
+def review_context(repo, repo_scan, facts):
+    """What the checks compare a case study against."""
+    files = [f.as_posix() for f in list_files(repo)]
+    return {
+        "sources": [repo_scan, facts],                     # everything the model saw
+        "files": files,
+        "prose": [readme_text(repo, files), facts, git_stats(repo)],   # where results are stated
+        "prompt": CASE_STUDY.split("=== END OF FACTS ===")[1],         # the instructions alone
+    }
+
+
+def review(case_study, context):
+    return check_case_study(case_study, context["sources"], files=context["files"],
+                            prose=context["prose"], prompt=context["prompt"])
+
+
+def bullets(lines):
+    return "\n".join(f"- {line}" for line in lines)
+
+
+def report_case_study(name, target, case_study, edited, problems):
     gaps = len(re.findall(r"\[add:", case_study))
     print(f"[{name}] saved {target}" + (f"  ({gaps} [add: ...] gaps to fill)" if gaps else ""))
     if edited:
         print(f"[{name}]   you edited case_study.md, so it was left alone. Copy what you "
               f"want from {target.name}, or delete case_study.md and use the new one.")
-    for problem in check_case_study(case_study, sources):
+    for problem in problems:
         print(f"[{name}]   WARN  {problem}")
 
 

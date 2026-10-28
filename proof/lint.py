@@ -14,6 +14,9 @@ Each problem is (level, message):
 import re
 
 from .match import tech_in
+from .stack import ALL_NAMES
+
+NAMED_TECH = {name.lower() for name in ALL_NAMES} | {"Go", "Room", "Hilt"}
 
 BUZZWORDS = [
     "passionate", "synergy", "cutting-edge", "cutting edge", "revolutionary",
@@ -112,8 +115,38 @@ def flipped_numbers(text, sources):
 # Case studies
 # ---------------------------------------------------------------------------
 
-def check_case_study(text, sources=()):
-    """Did the model follow the format, and can its numbers be traced? -> list of messages."""
+def check_case_study(text, sources=(), files=None, prose=None, prompt=None):
+    """Problems with a case study, as messages a person (or the model) can act on.
+    sources: the repo scan and facts. files: the repo's file paths. prose: what states
+    results in words (README, facts). prompt: the instructions the model was given."""
+    problems = format_problems(text)
+    if sources:
+        problems += claim_problems(text, sources)
+    if files is not None:
+        unknown = missing_files(text, files, sources)
+        if unknown:
+            problems.append(f"files that aren't in the repo: {', '.join(unknown)} - "
+                            "name only real files from the scan")
+    if prose is not None:
+        numbers = unsupported_numbers(section(text, "Results"), prose)
+        if numbers:
+            problems.append(f"Results numbers the README and your facts don't state: "
+                            f"{', '.join(numbers)} - remove them or use [add: ...]")
+    if prompt:
+        copied = copied_phrases(text, prompt, sources)
+        if copied:
+            problems.append("copied from the prompt's instructions instead of written about "
+                            f"this project: \"{copied[0]}...\"")
+    if vague_highlights(text):
+        problems.append("Engineering highlights name no real file or function - they read "
+                        "as generic. Name the files that do the hard parts.")
+    filler = [phrase for phrase in FILLER if phrase in text.lower()]
+    if filler:
+        problems.append(f"filler phrases: {', '.join(filler)} - say something specific instead")
+    return problems
+
+
+def format_problems(text):
     problems = []
     words = len(re.sub(r"```mermaid.*?```", "", text, flags=re.DOTALL).split())
     if words > MAX_CASE_STUDY_WORDS:
@@ -124,24 +157,67 @@ def check_case_study(text, sources=()):
         problems.append(f"missing sections: {', '.join(missing)}")
     if "```mermaid" not in text:
         problems.append("no Mermaid diagram")
-    if sources:
-        numbers = unsupported_numbers(text, sources)
-        if numbers:
-            problems.append(f"numbers not found in the repo or your facts: {', '.join(numbers)}"
-                            " - check them, the model may have made them up")
-        by_place = {}                       # "22" and "37" from "22 of 37 didn't run": one warning
-        for number, said in flipped_numbers(text, sources):
-            by_place.setdefault(said, []).append(number)
-        for said, numbers in by_place.items():
-            problems.append(f"{', '.join(numbers)}: meaning may be turned around - "
-                            f'the repo says "{said}"')
-    if vague_highlights(text):
-        problems.append("Engineering highlights name no real file or function - they read "
-                        "as generic. Name the files that do the hard parts.")
-    filler = [phrase for phrase in FILLER if phrase in text.lower()]
-    if filler:
-        problems.append(f"filler phrases: {', '.join(filler)} - say something specific instead")
     return problems
+
+
+def claim_problems(text, sources):
+    """Numbers and technologies the repo doesn't back up."""
+    problems = []
+    numbers = unsupported_numbers(text, sources)
+    if numbers:
+        problems.append(f"numbers not found in the repo or your facts: {', '.join(numbers)}"
+                        " - check them, the model may have made them up")
+    by_place = {}                       # "22" and "37" from "22 of 37 didn't run": one warning
+    for number, said in flipped_numbers(text, sources):
+        by_place.setdefault(said, []).append(number)
+    for said, numbers in by_place.items():
+        problems.append(f"{', '.join(numbers)}: meaning may be turned around - "
+                        f'the repo says "{said}"')
+    # Only named technologies: practices ("CI/CD", "REST APIs") are shown, not written down
+    tech = sorted(t for t in tech_in(text) - tech_in("\n".join(sources)) if t in NAMED_TECH)
+    if tech:
+        problems.append(f"technologies the repo never mentions: {', '.join(tech)}")
+    return problems
+
+
+# A path in the text: src/lib/dal.ts, app/(portal)/page.tsx, `cli.py`, src/app/portal/
+PATH = re.compile(r"(?<![\w/:.])((?:[\w.\-\[\]()]+/)+[\w.\-\[\]()]*)"
+                  r"|`([\w.\-]+\.[a-z]{1,6})`")
+
+
+def missing_files(text, files, sources=()):
+    """Paths the text names that match no file or folder in the repo. Partial paths count
+    ("doppel/sandbox.py" is src/doppel/sandbox.py), and so do files the repo's own code
+    mentions (a tool that reads tox.ini can talk about tox.ini). "CI/CD" and "AI/ML" have
+    no file extension and no trailing slash, so they aren't paths."""
+    files = ["/" + f for f in files]
+    mentioned = "\n".join(sources)
+    unknown = []
+    for match in PATH.finditer(text):
+        path = (match.group(1) or match.group(2)).strip("()").removeprefix("./")
+        is_file = re.search(r"\.[a-z]{1,6}$", path) is not None
+        if not (is_file or path.endswith("/")) or "://" in text[match.start():match.end() + 3]:
+            continue
+        if is_file:
+            found = any(f.endswith("/" + path) for f in files)
+        else:
+            found = any("/" + path in f for f in files)
+        if not found and path not in mentioned and path not in unknown:
+            unknown.append(path)
+    return unknown
+
+
+def copied_phrases(text, prompt, sources=(), length=6):
+    """Runs of `length` words the text shares with the prompt's own wording (and not with
+    the repo): a small model pasting an example instead of writing about the project."""
+    def runs(s):
+        # Headings and [add: ...] placeholders are meant to be the same as the prompt's
+        s = re.sub(r"^#.*$|\[add:[^\]]*\]", " ", s, flags=re.MULTILINE)
+        words = re.findall(r"[a-z0-9]+", s.lower())
+        return {" ".join(words[i:i + length]) for i in range(len(words) - length + 1)}
+    shared = runs(text) & runs(prompt)
+    shared -= runs("\n".join(sources))
+    return sorted(shared)
 
 
 # Phrases that make a case study sound like every other one
@@ -160,8 +236,8 @@ def section(text, heading):
 
 
 def vague_highlights(text):
-    highlights = section(text, "Engineering highlights")
-    return bool(highlights.strip()) and not CODE_REFERENCE.search(highlights)
+    highlights = re.sub(r"\[add:[^\]]*\]", "", section(text, "Engineering highlights"))
+    return bool(re.search(r"\w", highlights)) and not CODE_REFERENCE.search(highlights)
 
 
 # ---------------------------------------------------------------------------

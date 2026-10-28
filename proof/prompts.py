@@ -23,39 +23,36 @@ Use Markdown with exactly these sections, in this order:
 
 # <Project name> - <one line: what it does, and for whom>
 ## The problem
-(2-4 sentences: who exactly has this problem, and what goes wrong for them without this.
-Bad: "Many developers struggle with testing, which can be a daunting task."
-Good: "Small clinics book appointments by phone, so every missed call is a lost patient
-and the front desk spends hours a day on calls.")
+(2-4 sentences about THIS project: who has the problem it solves (a kind of person or
+business) and what goes wrong for them today. Take it from the README.)
 ## What I built
 (What the software does, from a user's point of view. Short paragraphs or bullets.)
 ## How it works
 (The architecture in plain words, 3-5 sentences. Then a Mermaid diagram in a ```mermaid
 block, with no sentence introducing it:
 - first line `flowchart TD` (top-down reads well on phones)
-- 5-10 boxes for real parts of the code, taken from "How the files connect" and the files
-  shown. Label each box with what it does and its file, e.g. A["Web API (app/main.py)"].
-- every box label in double quotes)
+- 5-10 boxes for real parts of THIS code, from "How the files connect" and the files shown.
+  Each label: what the part does, then its real path from the scan in brackets, in double
+  quotes: A["<what it does> (<path from the scan>)"].)
 ## Tech stack
-(Bullets, grouped: languages, frameworks, infra/devops, AI/ML - only what's really used.)
+(Bullets, grouped: languages, frameworks, infra/devops, AI/ML - only what's really used.
+Leave out a group that would be empty.)
 ## Engineering highlights
-(3-5 bullets on the hardest parts. Each one names a real file or function from the scan
-in backticks, says what it does, and why that was hard or clever.
-Bad: "Developed a comparison algorithm to identify changes."
-Good: "`sync/queue.py` retries failed uploads with backoff and resumes from the last
-chunk, so a dropped connection never loses a file.")
+(3-5 bullets on the hardest parts. Each bullet has this shape:
+`<a real file or function from the scan>` <what it does>, so <why that matters or was hard>.
+Never name a file that isn't in the scan.)
 ## Results
-(Real outcomes only: from the facts, or results written in the repo (README results,
-benchmarks, test counts). Keep each number with exactly what it measured, in the repo's own
-words - never change its meaning: "12 of 40 tests didn't run" must NOT become "passed 12
-of 40 tests".
-Pick the results that show the project working; skip zeros and failures. If there are no
-results, write placeholders like [add: response time / users / accuracy].)
+(Only results the README or the facts state. Copy each number together with the words the
+repo uses for it, and never change what it counts: if the repo says something did NOT work,
+don't write it as a success. Skip zeros and failures. If the repo states no results, write
+placeholders like [add: response time / users / accuracy].)
 ## Skills shown
-(Comma-separated skills a client would type into a job search: technologies and practices,
-like "REST APIs", "CI/CD", "LLM agents", "PostgreSQL". Not features of this project.)
+(Comma-separated skills a client would type into a job search: the technologies from the
+"Detected stack" line and your Tech stack section, plus practices this code clearly shows.
+Not features of this project.)
 
 Rules:
+- Everything you write is about THIS repository. The shapes above show the form only.
 - First person ("I built..."), confident and plain. No hype or filler: not "revolutionary",
   "cutting-edge", "seamless", "robust", "daunting", "struggle".
 - NEVER invent numbers, users, clients or features. Every number you write must appear in
@@ -97,8 +94,8 @@ Task: write profile text they can paste into Upwork and LinkedIn, plus resume bu
 Use exactly this Markdown:
 
 ## Headline
-(One line, under 70 characters, saying what they build. Example: "Python developer -
-RAG chatbots and LLM tools". No adjectives like "passionate".)
+(One line, under 70 characters, in the shape "<role> - <what they build>", using the
+main technologies of the projects below. No adjectives like "passionate".)
 ## About
 (For the Upwork overview and LinkedIn About. 120-200 words, first person. Open with the
 problems they solve for clients, then 2-3 projects as proof (name each), then the kind of
@@ -111,8 +108,37 @@ work they want. End by inviting the reader to get in touch.)
   Automated...), say what was built and with which tech, and the result if there is one.)
 
 Rules:
+- Everything you write comes from the case studies above. The shapes show the form only.
 - Only claims the case studies back up. Use only numbers that appear in them or in the
-  facts, and keep what each one measured. Never copy [add: ...] placeholders - leave that detail out instead.
+  facts, and keep what each one measured. Never copy [add: ...] placeholders - leave that
+  detail out instead.
 - Plain, direct words. No buzzwords.
 - Output only the Markdown above.
+"""
+
+
+# A second pass, when the checks in lint.py find problems in a draft. Small models are much
+# better at fixing a listed problem than at avoiding it the first time.
+REVISE = """Below is a scan of a code repository, facts from its developer, a case study
+written about it, and problems found in that case study.
+
+=== REPOSITORY SCAN ===
+{repo_scan}
+=== END OF REPOSITORY SCAN ===
+
+=== FACTS FROM THE DEVELOPER (true - use them) ===
+{facts}
+=== END OF FACTS ===
+
+=== CASE STUDY ===
+{case_study}
+=== END OF CASE STUDY ===
+
+Problems found in the case study:
+{problems}
+
+Task: rewrite the case study so every problem above is gone. Keep the same sections and
+everything that was right. Use only files, numbers and facts that appear in the scan or the
+facts; where a fact is missing, write an [add: ...] placeholder instead of guessing.
+Output only the corrected case study, starting with the "# " title line.
 """

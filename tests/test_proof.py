@@ -946,3 +946,67 @@ def test_pitch_lint_catches_flipped_numbers():
     pitch = "Your tests miss bugs. Doppel caught 22 of 37 BugsInPy bugs. Quick call?"
     problems = lint_pitch(pitch, sources=["BugsInPy bugs that ran (22 of 37 didn't run)"])
     assert any("22" in message and "wrong meaning" in message for _, message in problems)
+
+
+# llama3.1:8b, second run: it copied the prompt's examples into both case studies
+OLD_PROMPT_EXAMPLES = """Good: "`sync/queue.py` retries failed uploads with backoff and resumes from
+the last chunk, so a dropped connection never loses a file." Label each box with what it does
+and its file, e.g. A["Web API (app/main.py)"]. Keep each number with what it measured:
+"12 of 40 tests didn't run" must NOT become "passed 12 of 40 tests"."""
+CLIENT_DESK_FILES = ["prisma/schema.prisma", "src/lib/dal.ts", "src/app/(portal)/page.tsx",
+                     "src/app/(portal)/dashboard/page.tsx", "src/app/api/webhooks/stripe/route.ts"]
+
+
+def test_real_llama_copying_is_caught():
+    from proof.lint import check_case_study
+    text = (TOOL / "tests" / "fixtures" / "llama3.1-8b_client-desk_v2.md").read_text()
+    readme = "ClientDesk: Next.js 16, React 19, Prisma 6, PostgreSQL, Stripe. Uploads up to 50 MB."
+    problems = "\n".join(check_case_study(text, [readme], files=CLIENT_DESK_FILES,
+                                          prose=[readme], prompt=OLD_PROMPT_EXAMPLES))
+    assert "files that aren't in the repo: app/main.py, src/app/portal/" in problems
+    assert "sync/queue.py" in problems
+    assert "Results numbers the README and your facts don't state: 12, 40, 100%, 30" in problems
+    assert "copied from the prompt" in problems
+
+
+def test_paths_that_are_not_files():
+    from proof.lint import missing_files
+    text = ("Skills: CI/CD, AI/ML. Uses Next.js and Node.js. Reads `tox.ini`. See "
+            "doppel/sandbox.py and https://github.com/x/y.py and `nope.py`.")
+    files = ["src/doppel/sandbox.py"]
+    assert missing_files(text, files, sources=["finds the test command in tox.ini"]) == ["nope.py"]
+
+
+def test_case_study_is_repaired_once(repos, tmp_path, monkeypatch, capsys):
+    from proof import cli
+    bad = ("# rag-bot - answers questions over PDFs\n## The problem\nTeams lose time.\n"
+           "## What I built\nA bot.\n## How it works\nFastAPI app.\n```mermaid\nflowchart TD\n"
+           'A["API (app/main.py)"]\n```\n## Tech stack\n- FastAPI\n## Engineering highlights\n'
+           "- `sync/queue.py` retries uploads.\n## Results\n- [add: users]\n"
+           "## Skills shown\nFastAPI\n")
+    good = bad.replace("`sync/queue.py` retries uploads", "`app/main.py` serves the API")
+    replies = [bad, good]
+    prompts = []
+    monkeypatch.setattr(cli, "ask_llm", lambda prompt, provider, model: (prompts.append(prompt),
+                                                                       replies.pop(0))[1])
+    monkeypatch.chdir(tmp_path)
+    cli.main(["case", str(repos["rag"]), "--provider", "openai", "--model", "m"])
+    out = capsys.readouterr().out
+    assert "asking the model to fix them" in out and "WARN" not in out
+    assert "sync/queue.py" in prompts[1] and "=== CASE STUDY ===" in prompts[1]
+    saved = (tmp_path / "proof_output" / "rag-bot" / "case_study.md").read_text()
+    assert "`app/main.py` serves the API" in saved
+
+
+def test_worse_repair_is_thrown_away(repos, tmp_path, monkeypatch, capsys):
+    from proof import cli
+    bad = ("# rag-bot - x\n## The problem\nx\n## What I built\nx\n## How it works\nx\n```mermaid\n"
+           "flowchart TD\nA\n```\n## Tech stack\nx\n## Engineering highlights\n- `sync/q.py` x\n"
+           "## Results\nx\n## Skills shown\nx\n")
+    replies = [bad, "Sorry, I can't help with that."]
+    monkeypatch.setattr(cli, "ask_llm", lambda prompt, provider, model: replies.pop(0))
+    monkeypatch.chdir(tmp_path)
+    cli.main(["case", str(repos["rag"]), "--provider", "openai", "--model", "m"])
+    saved = (tmp_path / "proof_output" / "rag-bot" / "case_study.md").read_text()
+    assert saved.startswith("# rag-bot - x")
+    assert "files that aren't in the repo: sync/q.py" in capsys.readouterr().out
