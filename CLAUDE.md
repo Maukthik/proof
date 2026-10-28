@@ -67,12 +67,16 @@ ping, per-project), packaging (`pipx install git+https://github.com/Maukthik/pro
 Tested on 19 real repos (see "How to work on it"): stacks, reading order, import maps, matching,
 the 16-project portfolio page, URL clone + skip-without-clone, local folders with node_modules.
 
-Not yet verified: output quality from a real model (no model could be run where this was built).
-That's the first thing to check.
+First real-model run (llama3.1:8b, doppel, 2026-10-28; saved in tests/fixtures/): format right,
+no invented numbers, but (1) it turned "22 of 37 didn't run" into "caught 22 of 37", (2) generic
+problem text ("many developers struggle... daunting"), (3) highlights with no file names, (4) a zero
+result listed as an achievement, (5) project features in "Skills shown". Fixed with checks in lint.py
+(flipped numbers, vague highlights, filler) and bad/good examples in prompts.py. Next: rerun with
+--force and see which of these the prompt changes fixed.
 
 ## Next gaps to close (in priority order)
-1. Run on Mauk's real repos with a real model (`proof case ... --provider ollama`); tune `prompts.py`
-   from what comes out wrong. Look at: sections missing, diagram boxes that don't exist, numbers
+1. Keep tuning `prompts.py` on Mauk's real repos with a real model (`proof case ... --force`). Save each
+   real output that shows a new failure in tests/fixtures/ with a test that catches it. Look at: sections missing, diagram boxes that don't exist, numbers
    flagged by the claim check, generic "Skills shown".
 2. Try the templates for real: a `portfolio` repo with repos.txt, Pages on, one ping from doppel.
 3. `proof apply`: watch a job feed (RSS / saved search) and draft pitches for good matches.

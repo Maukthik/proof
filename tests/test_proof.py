@@ -902,3 +902,47 @@ def test_mistyped_folder_stops_before_any_work(repos, tmp_path):
     code, out = run("case", str(repos["rag"]), "no-such-repo", "--provider", "mock", cwd=tmp_path)
     assert code != 0 and "Not a folder: no-such-repo" in out
     assert not (tmp_path / "proof_output").exists()          # rag-bot wasn't written either
+
+
+# ---------------------------------------------------------------------------
+# Real model output (llama3.1:8b on Mauk's laptop, doppel, 2026-10-28)
+# ---------------------------------------------------------------------------
+
+DOPPEL_README_BITS = """Test mode was run on 30 open-source Python web apps.
+Where it works, it ran up to 10,214 tests and recorded thousands of requests per app without
+a single false difference. BugsInPy bugs that ran (22 of 37 didn't run: harness and connection
+errors, and failed installs). It caught 0 of 14 recent real fixes.
+A live pull request on a fresh repo: all 44 tests pass, Doppel fails the check."""
+
+
+def test_real_llama_output_problems_are_caught():
+    from proof.lint import check_case_study
+    text = (TOOL / "tests" / "fixtures" / "llama3.1-8b_doppel.md").read_text()
+    problems = "\n".join(check_case_study(text, [DOPPEL_README_BITS]))
+    assert "22, 37: meaning may be turned around" in problems
+    assert "22 of 37 didn't run" in problems
+    assert "Engineering highlights name no real file" in problems
+    assert "daunting" in problems and "here is a mermaid" in problems
+    assert "10,214" not in problems                    # "without" is too far from the number
+
+
+def test_negation_must_be_close_to_the_number():
+    from proof.lint import flipped_numbers
+    source = "A live PR: all 44 tests pass, Doppel fails the check."
+    assert flipped_numbers("All 44 tests passed.", [source]) == []      # "fails" is another clause
+    flip = [("44", "44 tests didn't run")]
+    assert flipped_numbers("Ran 44 tests.", ["44 tests didn't run"]) == flip
+    assert flipped_numbers("44 tests didn't run.", ["44 tests didn't run"]) == []
+
+
+def test_specific_highlights_pass():
+    from proof.lint import vague_highlights
+    assert not vague_highlights("## Engineering highlights\n- `diff.py` ignores noisy fields\n")
+    assert not vague_highlights("## Engineering highlights\n- settle() is idempotent\n")
+    assert vague_highlights("## Engineering highlights\n- Built a comparison tool\n## Results\n")
+
+
+def test_pitch_lint_catches_flipped_numbers():
+    pitch = "Your tests miss bugs. Doppel caught 22 of 37 BugsInPy bugs. Quick call?"
+    problems = lint_pitch(pitch, sources=["BugsInPy bugs that ran (22 of 37 didn't run)"])
+    assert any("22" in message and "wrong meaning" in message for _, message in problems)

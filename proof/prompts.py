@@ -23,28 +23,41 @@ Use Markdown with exactly these sections, in this order:
 
 # <Project name> - <one line: what it does, and for whom>
 ## The problem
-(Who has this problem and why it matters. 2-4 sentences.)
+(2-4 sentences: who exactly has this problem, and what goes wrong for them without this.
+Bad: "Many developers struggle with testing, which can be a daunting task."
+Good: "Small clinics book appointments by phone, so every missed call is a lost patient
+and the front desk spends hours a day on calls.")
 ## What I built
 (What the software does, from a user's point of view. Short paragraphs or bullets.)
 ## How it works
-(The architecture in plain words. Then a Mermaid diagram in a ```mermaid block:
+(The architecture in plain words, 3-5 sentences. Then a Mermaid diagram in a ```mermaid
+block, with no sentence introducing it:
 - first line `flowchart TD` (top-down reads well on phones)
-- 5-10 boxes, based on "How the files connect" and the main files. Only parts that exist.
-- every box label in double quotes, e.g. A["FastAPI server"] --> B["Postgres"])
+- 5-10 boxes for real parts of the code, taken from "How the files connect" and the files
+  shown. Label each box with what it does and its file, e.g. A["Web API (app/main.py)"].
+- every box label in double quotes)
 ## Tech stack
 (Bullets, grouped: languages, frameworks, infra/devops, AI/ML - only what's really used.)
 ## Engineering highlights
-(3-5 bullets on the hardest or most impressive parts. Name the real files or functions.)
+(3-5 bullets on the hardest parts. Each one names a real file or function from the scan
+in backticks, says what it does, and why that was hard or clever.
+Bad: "Developed a comparison algorithm to identify changes."
+Good: "`sync/queue.py` retries failed uploads with backoff and resumes from the last
+chunk, so a dropped connection never loses a file.")
 ## Results
-(Real outcomes only: from the facts, or numbers written in the repo such as README results
-or test counts. If there are none, write placeholders like [add: response time / users /
-accuracy] for the developer to fill in.)
+(Real outcomes only: from the facts, or results written in the repo (README results,
+benchmarks, test counts). Keep each number with exactly what it measured, in the repo's own
+words - never change its meaning: "12 of 40 tests didn't run" must NOT become "passed 12
+of 40 tests".
+Pick the results that show the project working; skip zeros and failures. If there are no
+results, write placeholders like [add: response time / users / accuracy].)
 ## Skills shown
-(A comma-separated list of skills a client would search for.)
+(Comma-separated skills a client would type into a job search: technologies and practices,
+like "REST APIs", "CI/CD", "LLM agents", "PostgreSQL". Not features of this project.)
 
 Rules:
-- First person ("I built..."), confident and plain. No hype words like "revolutionary",
-  "cutting-edge", "seamless" or "robust".
+- First person ("I built..."), confident and plain. No hype or filler: not "revolutionary",
+  "cutting-edge", "seamless", "robust", "daunting", "struggle".
 - NEVER invent numbers, users, clients or features. Every number you write must appear in
   the scan or the facts. Anything missing becomes an [add: ...] placeholder.
 - Under 600 words, not counting the diagram.
@@ -69,8 +82,8 @@ Rules:
 - Connect 2-3 specific things from the projects to what the opportunity asks for.
   Name the project each one comes from.
 - If no project matches some requirement, don't pretend - say briefly how they'd handle it.
-- Use only numbers that appear in the case studies or facts. Never copy [add: ...]
-  placeholders.
+- Use only numbers that appear in the case studies or facts, and keep what each one
+  measured. Never copy [add: ...] placeholders.
 - End with one concrete next step (a question, or offering a quick call or demo).
 - Under 180 words. Plain, direct, no buzzwords.
 - Output only the reply text.
@@ -99,7 +112,7 @@ work they want. End by inviting the reader to get in touch.)
 
 Rules:
 - Only claims the case studies back up. Use only numbers that appear in them or in the
-  facts. Never copy [add: ...] placeholders - leave that detail out instead.
+  facts, and keep what each one measured. Never copy [add: ...] placeholders - leave that detail out instead.
 - Plain, direct words. No buzzwords.
 - Output only the Markdown above.
 """
