@@ -94,7 +94,10 @@ def write_case_study(repo_arg, clone_dir, args):
               f"things up. Push some code (or use --force).")
         return
     print(f"[{name}] scanning ...")
-    repo_scan = scan_repo(repo, budget=args.scan_chars or scan_budget(args.provider))
+    removed = []
+    repo_scan = scan_repo(repo, budget=args.scan_chars or scan_budget(args.provider),
+                          removed=removed)
+    warn_about_secrets(name, removed)
     prompt = casestudy.build_prompt(repo_scan, facts)
     out_dir.mkdir(parents=True, exist_ok=True)
     # Kept with every case study: the exact input, for `proof dataset` (training data)
@@ -130,6 +133,14 @@ def write_case_study(repo_arg, clone_dir, args):
     if start_facts_file(out_dir, name, case_study):
         print(f"[{name}] started {out_dir / 'facts.md'} - fill in the real numbers there, "
               f"then run this again to close the gaps")
+
+
+def warn_about_secrets(name, removed):
+    """Secrets found in the code were kept out of the prompt - but they're still in the repo."""
+    for path in dict.fromkeys(path for path, _ in removed):
+        kinds = sorted({kind for p, kind in removed if p == path})
+        print(f"[{name}]   SECRET  {path}: {', '.join(kinds)} - kept out of the prompt, "
+              f"but it's in your repo: move it to .env and rotate it")
 
 
 def report_case_study(name, target, case_study, edited, problems):

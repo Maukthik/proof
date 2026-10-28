@@ -19,6 +19,8 @@ import tempfile
 from pathlib import Path
 
 from .codemap import describe_imports, internal_imports
+from .outline import outline
+from .redact import redact
 from .stack import CONFIG_FILE, LANGUAGES, detect, main_languages
 
 # Folders we never look inside
@@ -87,7 +89,8 @@ MAX_TOTAL_CHARS = 70000  # whole scan, by default (llm.scan_budget picks a small
 MAX_READ_BYTES = 2_000_000       # bigger "code" files are data or generated: skipped
 MAX_NOTEBOOK_BYTES = 20_000_000  # notebooks carry their outputs, so they get more room
 MIN_README_WORDS = 150   # with no code, a README shorter than this is too little to write about
-SUMMARY_CHARS = 4000     # part of that kept for one-line summaries of files that didn't fit
+SUMMARY_CHARS = 4000     # at least this much is kept for outlines of files that didn't fit
+OUTLINE_SHARE = 0.2      # ... or this share of the budget, whichever is more
 
 
 # ---------------------------------------------------------------------------
@@ -354,8 +357,17 @@ def summarise_tree(files):
     return "\n".join(lines)
 
 
-def scan_repo(repo, budget=MAX_TOTAL_CHARS):
-    """Build one text summary of the repo for the LLM, at most `budget` characters."""
+def scan_repo(repo, budget=MAX_TOTAL_CHARS, removed=None):
+    """Build one text summary of the repo for the LLM, at most `budget` characters.
+    Keys and passwords written into the code are taken out first (see redact.py); pass a
+    list as `removed` to learn which: it gets (file, kind of secret) pairs."""
+    removed = removed if removed is not None else []
+
+    def clean(text, f):
+        text, kinds = redact(text, f.name)
+        removed.extend((f.as_posix(), kind) for kind in kinds)
+        return text
+
     files = list_files(repo)
     main_files = [f for f in files if not is_side_folder(f)]
     generated = {f for f in main_files if f.suffix in CODE_EXTENSIONS and looks_generated(repo / f)}
@@ -374,6 +386,8 @@ def scan_repo(repo, budget=MAX_TOTAL_CHARS):
     if imports:
         parts.append("# How the files connect (A -> B means A imports B):\n" + imports)
 
+    # Whole files first, then outlines of the files that didn't fit (see outline.py)
+    outline_budget = max(SUMMARY_CHARS, int(budget * OUTLINE_SHARE))
     used = sum(len(part) for part in parts)
     not_read = []
     languages = main_languages(main_files)
@@ -385,24 +399,36 @@ def scan_repo(repo, budget=MAX_TOTAL_CHARS):
             text = read_text(repo / f, limit=MAX_CODE_CHARS if is_code else MAX_FILE_CHARS)
         if not text.strip():
             continue
-        if used + len(text) > budget - SUMMARY_CHARS:
+        if used + len(text) > budget - outline_budget:
             not_read.append(f)
             continue
-        parts.append(f"# File: {f}\n```\n{text}\n```")
+        parts.append(f"# File: {f}\n```\n{clean(text, f)}\n```")
         used += len(text)
 
-    # Files that didn't fit: still give one line each, so the LLM knows they exist
-    summaries, summary_chars = [], 0
-    for f in not_read:
-        summary = first_line_summary(repo / f)
-        line = f"- {f}: {summary}"
-        if summary and not is_side_folder(f) and summary_chars + len(line) < SUMMARY_CHARS:
-            summaries.append(line)
-            summary_chars += len(line) + 1
-    if summaries:
-        parts.append("# Other main files (not shown, first line of each):\n" + "\n".join(summaries))
-
+    skeletons = outlines([f for f in not_read if not is_side_folder(f)], repo, outline_budget, clean)
+    if skeletons:
+        parts.append("# Outlines of other main files (signatures only, bodies not shown):\n"
+                     + skeletons)
     return "\n\n".join(parts)
+
+
+def outlines(files, repo, budget, clean):
+    """Outlines of files that didn't fit, most important first, within `budget` characters.
+    A file with nothing to outline (a config, a stub) gets its first line instead."""
+    blocks, used = [], 0
+    for f in files:
+        skeleton = outline(f, read_text(repo / f, limit=200_000))
+        if skeleton:
+            block = f"## {f}\n{clean(skeleton, f)}"
+        elif first_line_summary(repo / f):
+            block = f"## {f}: {first_line_summary(repo / f)}"
+        else:
+            continue
+        if used + len(block) > budget:
+            continue                         # a smaller outline further down may still fit
+        blocks.append(block)
+        used += len(block) + 2
+    return "\n\n".join(blocks)
 
 
 RESULT_HEADINGS = re.compile(r"result|benchmark|evaluat|performance|metric|impact|demo|accuracy|numbers",

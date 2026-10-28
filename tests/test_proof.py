@@ -469,7 +469,7 @@ def test_scan_respects_budget(tmp_path):
     files = {f"src/m{i}.py": f'"""Module {i}."""\n' + "x = 1\n" * 500 for i in range(40)}
     text = scan_repo(make_repo(tmp_path, "big", files), budget=20_000)
     assert len(text) < 20_000
-    assert "# Other main files" in text and ": Module " in text     # the rest, one line each
+    assert "# Outlines of other main files" in text and ": Module " in text   # the rest, briefly
 
 
 def test_ollama_budget_fits_its_context(monkeypatch):
@@ -1219,3 +1219,68 @@ def test_ideas_naming_unknown_files_are_flagged():
     ideas = parse_ideas(text)
     assert ideas[0]["title"] == "Faster search" and ideas[0]["Size"] == "small (hours)"
     assert unknown_files(ideas, ["app/main.py"], []) == ["lib/ghost.py"]
+
+
+# ---------------------------------------------------------------------------
+# Secrets, outlines (ideas from repomix/secretlint and aider's repo map)
+# ---------------------------------------------------------------------------
+
+def test_known_key_formats_are_removed():
+    from proof.redact import REMOVED, redact
+    text = ('OPENAI = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"\n'
+            'aws = "AKIAABCDEFGHIJKLMNOP"\nghp = "ghp_' + "a" * 36 + '"\n'
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----\n"
+            "stripe = 'sk_live_" + "b" * 24 + "'\n")
+    cleaned, found = redact(text)
+    assert "sk-proj-" not in cleaned and "AKIA" not in cleaned and "ghp_" not in cleaned
+    assert "MIIabc" not in cleaned and "sk_live_" not in cleaned
+    assert cleaned.count(REMOVED) == 5
+    assert set(found) == {"OpenAI key", "AWS access key", "GitHub token", "private key",
+                          "Stripe key"}
+
+
+def test_passwords_but_not_placeholders():
+    from proof.redact import redact
+    text = ('password = "hunter2hunter2"\napi_key = "your-api-key-here"\n'
+            'DB = "postgres://app:s3cretPass@prod.db.example.net/app"\n'
+            'LOCAL = "postgresql://dev:dev@localhost:5432/dev"\n'
+            'token = os.environ["TOKEN"]\n')
+    cleaned, found = redact(text)
+    assert "hunter2" not in cleaned and "s3cretPass" not in cleaned
+    assert "your-api-key-here" in cleaned and "dev:dev@localhost" in cleaned
+    assert len(found) == 2
+    example, found = redact('password = "hunter2hunter2"', path=".env.example")
+    assert found == []                                          # example files hold placeholders
+
+
+def test_scan_keeps_secrets_out_of_the_prompt(tmp_path):
+    repo = make_repo(tmp_path, "leaky", {"config.py": 'OPENAI_KEY = "sk-' + "x" * 40 + '"\n',
+                                         "main.py": "import config\n"})
+    removed = []
+    text = scan_repo(repo, removed=removed)
+    assert "sk-xxxx" not in text and "[secret removed by proof]" in text
+    assert removed == [("config.py", "OpenAI key")]
+    code, out = run("case", str(repo), "--provider", "mock", cwd=tmp_path)
+    assert "SECRET  config.py: OpenAI key" in out
+
+
+def test_outlines():
+    from proof.outline import outline
+    py = ('"""Doc."""\nimport os\n\nclass Store(Base):\n    """Keeps things."""\n'
+          "    def get(self, key: str) -> str:\n        return 1\n    def _hidden(self):\n"
+          "        pass\n\nasync def fetch(url, retries=3):\n    pass\n")
+    assert outline(Path("a.py"), py) == ("class Store(Base)  # Keeps things.\n"
+                                         "    def get(self, key: str)\n"
+                                         "async def fetch(url, retries=3)")
+    ts = "import x\nexport async function load(id: string) {\n  return 1\n}\nconst y = 2\n"
+    assert outline(Path("a.ts"), ts) == "export async function load(id: string)"
+    go = "package ui\nfunc (m *model) View() string {\n}\ntype model struct {\n"
+    assert outline(Path("a.go"), go) == "func (m *model) View() string\ntype model struct"
+    assert outline(Path("a.py"), "def broken(:\n") == "def broken(:"         # falls back to lines
+
+
+def test_files_that_dont_fit_are_outlined(tmp_path):
+    files = {f"src/m{i}.py": f"def handler_{i}(request):\n    pass\n" + "x = 1\n" * 600
+             for i in range(20)}
+    text = scan_repo(make_repo(tmp_path, "big", files), budget=20_000)
+    assert "# Outlines of other main files" in text and "def handler_19(request)" in text
