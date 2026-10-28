@@ -978,7 +978,7 @@ def test_paths_that_are_not_files():
 
 
 def test_case_study_is_repaired_once(repos, tmp_path, monkeypatch, capsys):
-    from proof import cli
+    from proof import casestudy, cli
     bad = ("# rag-bot - answers questions over PDFs\n## The problem\nTeams lose time.\n"
            "## What I built\nA bot.\n## How it works\nFastAPI app.\n```mermaid\nflowchart TD\n"
            'A["API (app/main.py)"]\n```\n## Tech stack\n- FastAPI\n## Engineering highlights\n'
@@ -987,8 +987,10 @@ def test_case_study_is_repaired_once(repos, tmp_path, monkeypatch, capsys):
     good = bad.replace("`sync/queue.py` retries uploads", "`app/main.py` serves the API")
     replies = [bad, good]
     prompts = []
-    monkeypatch.setattr(cli, "ask_llm", lambda prompt, provider, model: (prompts.append(prompt),
-                                                                       replies.pop(0))[1])
+    def fake_llm(prompt, provider, model):
+        prompts.append(prompt)
+        return replies.pop(0)
+    monkeypatch.setattr(casestudy, "ask_llm", fake_llm)
     monkeypatch.chdir(tmp_path)
     cli.main(["case", str(repos["rag"]), "--provider", "openai", "--model", "m"])
     out = capsys.readouterr().out
@@ -999,14 +1001,64 @@ def test_case_study_is_repaired_once(repos, tmp_path, monkeypatch, capsys):
 
 
 def test_worse_repair_is_thrown_away(repos, tmp_path, monkeypatch, capsys):
-    from proof import cli
+    from proof import casestudy, cli
     bad = ("# rag-bot - x\n## The problem\nx\n## What I built\nx\n## How it works\nx\n```mermaid\n"
            "flowchart TD\nA\n```\n## Tech stack\nx\n## Engineering highlights\n- `sync/q.py` x\n"
            "## Results\nx\n## Skills shown\nx\n")
     replies = [bad, "Sorry, I can't help with that."]
-    monkeypatch.setattr(cli, "ask_llm", lambda prompt, provider, model: replies.pop(0))
+    monkeypatch.setattr(casestudy, "ask_llm", lambda prompt, provider, model: replies.pop(0))
     monkeypatch.chdir(tmp_path)
     cli.main(["case", str(repos["rag"]), "--provider", "openai", "--model", "m"])
     saved = (tmp_path / "proof_output" / "rag-bot" / "case_study.md").read_text()
     assert saved.startswith("# rag-bot - x")
     assert "files that aren't in the repo: sync/q.py" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Claim links: each Results line points to the README line it comes from
+# ---------------------------------------------------------------------------
+
+LINK_README = """# Tool
+<img alt="architecture: 17 parts, 20 arrows">
+| Arm | Caught | False alarms |
+| Tool | 17/20 | 2/10 |
+| Tests alone | 12/20 | 0/10 |
+Gaps were fixed against these apps: 1/10 before, 8/10 after.
+BugsInPy bugs that ran (22 of 37 didn't run: harness errors).
+It ran up to 10,214 tests per app without a single false difference."""
+
+
+def test_claim_links_point_to_the_right_lines():
+    from proof.claims import add_source_links
+    case_study = ("# Tool\n## Results\n- Caught 17/20 regressions, against 12/20 for tests alone.\n"
+                  "- 8 of 10 apps worked after fixing gaps.\n- Caught 22 of 37 BugsInPy bugs.\n"
+                  "- Ran 10,214 tests.\n- Serves 900 users.\n- [add: response time]\n"
+                  "## Skills shown\nPython\n")
+    linked = add_source_links(case_study, LINK_README, "README.md", "- users: 900",
+                              "https://github.com/me/tool", "abc123")
+    url = "https://github.com/me/tool/blob/abc123/README.md#L"
+    assert f"12/20 for tests alone. ([source]({url}4)) ([source]({url}5))" in linked
+    assert f"after fixing gaps. ([source]({url}6))" in linked
+    assert "- Caught 22 of 37 BugsInPy bugs.\n" in linked          # meaning flipped: no link
+    assert f"Ran 10,214 tests. ([source]({url}8))" in linked
+    assert "Serves 900 users. (self-reported)" in linked
+    assert "#L2" not in linked                                      # HTML alt text isn't a source
+    assert linked.endswith("## Skills shown\nPython\n")             # other sections untouched
+
+
+def test_claim_links_without_a_web_address():
+    from proof.claims import add_source_links
+    linked = add_source_links("## Results\n- Ran 10,214 tests.\n", LINK_README, "README.md",
+                              "", None, None)
+    assert "Ran 10,214 tests. (README.md line 8)" in linked
+
+
+def test_web_url_and_pushed_commit(tmp_path):
+    from proof.scan import pushed_commit, web_url
+    assert web_url("https://github.com/me/app.git", None) == "https://github.com/me/app"
+    repo = make_repo(tmp_path, "app", {"main.py": "x = 1\n"})
+    assert web_url(str(repo), repo) is None                         # no remote
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                    "git@github.com:me/app.git"], check=True)
+    assert web_url(str(repo), repo) == "https://github.com/me/app"
+    assert pushed_commit(repo) == "HEAD"                            # not on any remote yet

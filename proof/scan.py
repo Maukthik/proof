@@ -126,6 +126,24 @@ def get_repo(repo_arg, clone_dir=None):
     return path
 
 
+def web_url(repo_arg, repo):
+    """The repo's web address, for links: "https://github.com/you/app" (None if unknown).
+    From the URL it was cloned from, or a local repo's "origin" remote."""
+    url = repo_arg if is_url(repo_arg) else git(repo, "remote", "get-url", "origin")
+    if url.startswith("git@"):                          # git@github.com:you/app.git
+        url = "https://" + url[4:].replace(":", "/", 1)
+    if not url.startswith("https://"):
+        return None
+    return url.rstrip("/").removesuffix(".git")
+
+
+def pushed_commit(repo):
+    """The current commit if it's on the remote (so a link to it works), else "HEAD"."""
+    commit = head_commit(repo)
+    on_remote = git(repo, "branch", "-r", "--contains", commit) if commit else ""
+    return commit if on_remote else "HEAD"
+
+
 def remote_head(url):
     """Latest commit of a remote repo, without cloning it ('' if we can't tell)."""
     result = subprocess.run(["git", "ls-remote", url, "HEAD"], capture_output=True, **GIT_TEXT)

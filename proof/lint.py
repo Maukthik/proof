@@ -78,9 +78,9 @@ def unsupported_numbers(text, sources):
     return unsupported
 
 
-# "not", "didn't", "failed" ... : words that turn a number's meaning around
-NEGATION = re.compile(r"\b(not|no|never|none|without|failed|fails|unable)\b|n't\b",
-                      re.IGNORECASE)
+# "not", "didn't", "failed" ... : words that turn a number's meaning around. ("without"
+# isn't one: "10,214 tests without a false difference" says nothing against the 10,214.)
+NEGATION = re.compile(r"\b(not|no|never|none|failed|fails|unable)\b|n't\b", re.IGNORECASE)
 
 
 def words_around(text, start, end, count=4):

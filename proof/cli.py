@@ -29,14 +29,14 @@ from pathlib import Path
 
 from .facts import fingerprint, read_facts, start_facts_file
 from .jobpost import read_job
-from .lint import check_case_study, lint_pitch, print_problems, unsupported_numbers
-from .llm import (DEFAULT_MODELS, ask_llm, drop_preamble, fix_mermaid, scan_budget,
-                  strip_wrapper)
+from . import casestudy
+from .lint import lint_pitch, print_problems, unsupported_numbers
+from .llm import DEFAULT_MODELS, ask_llm, scan_budget, strip_wrapper
 from .match import rank_projects
 from .portfolio import build_site, load_case_studies
-from .prompts import CASE_STUDY, PITCH, PROFILE, REVISE
-from .scan import (detect_stack, get_repo, git_stats, has_enough_to_write_about, head_commit,
-                   is_url, list_files, readme_text, remote_head, repo_name, scan_repo)
+from .prompts import PITCH, PROFILE
+from .scan import (detect_stack, get_repo, has_enough_to_write_about, head_commit, is_url,
+                   list_files, pushed_commit, remote_head, repo_name, scan_repo, web_url)
 from .tracker import STATUSES, load_log, record_pitch, report, update_status
 
 
@@ -76,28 +76,21 @@ def write_case_study(repo_arg, clone_dir, args):
               f"things up. Push some code (or use --force).")
         return
     print(f"[{name}] scanning ...")
-    repo_scan = scan_repo(repo, budget=scan_budget(args.provider))
-    prompt = CASE_STUDY.format(repo_scan=repo_scan, facts=facts or "(none given)")
+    repo_scan = scan_repo(repo, budget=args.scan_chars or scan_budget(args.provider))
+    prompt = casestudy.build_prompt(repo_scan, facts)
     out_dir.mkdir(parents=True, exist_ok=True)
-
+    # Kept with every case study: the exact input, for `proof dataset` (training data)
+    (out_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
     if args.dry_run:
-        (out_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
         print(f"[{name}] dry run - prompt saved to {out_dir / 'prompt.txt'}")
         return
 
     print(f"[{name}] writing case study with {args.provider}/{args.model} ...")
-    case_study = draft(prompt, args)
-    context = review_context(repo, repo_scan, facts)
-    problems = review(case_study, context)
-    if problems:
-        # One repair round: small models fix a listed problem far better than they avoid it
-        print(f"[{name}] checks found {len(problems)} problem(s) - "
-              f"asking the model to fix them ...")
-        revised = draft(REVISE.format(repo_scan=repo_scan, facts=facts or "(none given)",
-                                      case_study=case_study, problems=bullets(problems)), args)
-        revised_problems = review(revised, context)
-        if len(revised_problems) < len(problems):
-            case_study, problems = revised, revised_problems
+    result = casestudy.write(repo, repo_scan, facts, args.provider, args.model,
+                             say=lambda message: print(f"[{name}] {message}"))
+    commit = head_commit(repo)
+    case_study = casestudy.link_sources(result["case_study"], repo, facts,
+                                        web_url(repo_arg, repo), pushed_commit(repo))
 
     # Never overwrite a case study you edited: put the new one next to it instead
     edited = was_edited(out_dir / "case_study.md", meta)
@@ -105,44 +98,20 @@ def write_case_study(repo_arg, clone_dir, args):
     target.write_text(case_study + "\n", encoding="utf-8")
 
     meta = {
-        "name": name, "source": repo_arg, "commit": head_commit(repo),
+        "name": name, "source": repo_arg, "commit": commit,
         "stack": detect_stack(repo, list_files(repo)),
         "provider": args.provider, "model": args.model,
         "generated": date.today().isoformat(),
         "facts": fingerprint(facts),                   # to notice when you add facts
         "written": fingerprint(case_study + "\n"),     # to notice when you edit it
+        "problems": result["problems"],                # what the checks still found
     }
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
-    report_case_study(name, target, case_study, edited, problems)
+    report_case_study(name, target, case_study, edited, result["problems"])
     if start_facts_file(out_dir, name, case_study):
         print(f"[{name}] started {out_dir / 'facts.md'} - fill in the real numbers there, "
               f"then run this again to close the gaps")
-
-
-def draft(prompt, args):
-    """Ask the model, and tidy what comes back."""
-    return fix_mermaid(drop_preamble(strip_wrapper(ask_llm(prompt, args.provider, args.model))))
-
-
-def review_context(repo, repo_scan, facts):
-    """What the checks compare a case study against."""
-    files = [f.as_posix() for f in list_files(repo)]
-    return {
-        "sources": [repo_scan, facts],                     # everything the model saw
-        "files": files,
-        "prose": [readme_text(repo, files), facts, git_stats(repo)],   # where results are stated
-        "prompt": CASE_STUDY.split("=== END OF FACTS ===")[1],         # the instructions alone
-    }
-
-
-def review(case_study, context):
-    return check_case_study(case_study, context["sources"], files=context["files"],
-                            prose=context["prose"], prompt=context["prompt"])
-
-
-def bullets(lines):
-    return "\n".join(f"- {line}" for line in lines)
 
 
 def report_case_study(name, target, case_study, edited, problems):
@@ -323,6 +292,9 @@ def main(argv=None):
     p.add_argument("repos", nargs="+", help="Local folders or GitHub URLs")
     p.add_argument("--force", action="store_true", help="Redo even if unchanged")
     p.add_argument("--dry-run", action="store_true", help="Save prompts, don't call the LLM")
+    p.add_argument("--scan-chars", type=int, default=None,
+                   help="How much of the repo the model sees (default: fits the model). "
+                        "Set it to make training data for a smaller model's context.")
     p.set_defaults(func=cmd_case)
 
     p = sub.add_parser("pitch", parents=[common], help="Write a pitch for a job post")

@@ -140,6 +140,7 @@ PAGE = """<!doctype html>
   pre {{ overflow-x:auto; }}
   pre.mermaid {{ background:transparent; text-align:center; }}
   mark {{ background: var(--mark); color: inherit; padding: 0 3px; border-radius: 3px; }}
+  a[href*="/blob/"] {{ font-size: .75em; color: var(--muted); }}   /* claim source links */
   a {{ color: var(--accent); }}
   .top {{ font-size:.85rem; }}
   .contact {{ margin-top: 8px !important; }}
