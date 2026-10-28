@@ -896,3 +896,9 @@ def test_ollama_missing_model(fake_api, monkeypatch):
     monkeypatch.setenv("OLLAMA_URL", fake_api + "/missing")
     with pytest.raises(SystemExit, match="ollama list"):
         llm.ask_llm("hello", "ollama", "qwen2.5-coder:7b")
+
+
+def test_mistyped_folder_stops_before_any_work(repos, tmp_path):
+    code, out = run("case", str(repos["rag"]), "no-such-repo", "--provider", "mock", cwd=tmp_path)
+    assert code != 0 and "Not a folder: no-such-repo" in out
+    assert not (tmp_path / "proof_output").exists()          # rag-bot wasn't written either

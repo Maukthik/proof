@@ -45,6 +45,11 @@ from .tracker import STATUSES, load_log, record_pitch, report, update_status
 # ---------------------------------------------------------------------------
 
 def cmd_case(args):
+    # Catch a mistyped folder now, not after minutes of model work on the others
+    missing = [arg for arg in args.repos if not is_url(arg) and not Path(arg).expanduser().is_dir()]
+    if missing:
+        sys.exit("Not a folder: " + ", ".join(missing) + "\nNothing was written. Fix the path, "
+                 "or use the GitHub URL (https://github.com/you/repo).")
     for repo_arg in args.repos:
         # A temporary folder for GitHub clones; deleted when we're done with this repo
         with tempfile.TemporaryDirectory(prefix="proof_") as clone_dir:
