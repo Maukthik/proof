@@ -63,7 +63,9 @@ def ask_llm(prompt, provider, model):
                               "options": {"num_ctx": ollama_num_ctx(),
                                           "temperature": TEMPERATURE}},
                         timeout=900,
-                        not_running=f"Can't reach Ollama at {url}. Is `ollama serve` running?")
+                        not_running=f"Can't reach Ollama at {url}. Is `ollama serve` running?",
+                        not_found=f"Ollama doesn't have the model '{model}'. Run `ollama list` "
+                                  f"and pick one with --model, or `ollama pull {model}`.")
         return response.json()["message"]["content"]
 
     if provider == "openai":
@@ -80,9 +82,9 @@ def ask_llm(prompt, provider, model):
     sys.exit(f"Unknown provider: {provider}")
 
 
-def post(url, body, headers=None, timeout=300, not_running=None):
+def post(url, body, headers=None, timeout=300, not_running=None, not_found=None):
     """POST JSON. Waits and retries on rate limits / server hiccups; stops with a
-    readable error on anything else."""
+    readable error on anything else (`not_running`, `not_found`: friendlier wording)."""
     for wait in RETRY_WAITS + [None]:
         try:
             response = requests.post(url, json=body, headers=headers, timeout=timeout)
@@ -94,6 +96,8 @@ def post(url, body, headers=None, timeout=300, not_running=None):
             print(f"  LLM API busy ({response.status_code}), retrying in {wait}s ...")
             time.sleep(wait)
             continue
+        if response.status_code == 404 and not_found:
+            sys.exit(not_found)
         sys.exit(f"LLM API error {response.status_code}:\n{response.text[:1000]}")
 
 
@@ -102,8 +106,11 @@ def post(url, body, headers=None, timeout=300, not_running=None):
 # ---------------------------------------------------------------------------
 
 def strip_wrapper(text):
-    """Remove what models put around the answer:
-    "Here's your case study:" before it, or a ```markdown fence around all of it."""
+    """Remove what models put around the answer: a <think>...</think> block (reasoning
+    models like qwen3 and deepseek-r1), "Here's your case study:" before it, or a
+    ```markdown fence around all of it."""
+    if "</think>" in text:                  # sometimes the opening <think> is left out
+        text = text.split("</think>")[-1]
     text = text.strip()
     # [^#]* = only chatter before the fence, no heading: the fence wraps the whole answer
     match = re.match(r"[^#]*?```(?:markdown|md)\s*\n(.*)\n```", text, flags=re.DOTALL)

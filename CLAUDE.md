@@ -33,7 +33,8 @@ Everything is in the `proof/` package (installed as the `proof` command via `pyp
 - Run tests: `python -m pytest -q` (all must pass before committing)
 - Run without installing: `python -m proof ...`; or `pip install -e ".[test]"` once, then `proof ...`
 - Try the whole flow with no model: `proof case <repo> --provider mock`, then `proof site`
-- Real model: `--provider ollama` (Mauk's laptop: RTX 3050 6GB, runs qwen2.5-coder:7b) or openai-compatible
+- Real model: `--provider ollama` (Mauk's laptop: Windows, RTX 3050 6GB; has llama3.1:8b-instruct-q4_K_M,
+  qwen3:4b-thinking, deepseek-coder-v2:16b-lite; run as `py -m proof`) or openai-compatible
 - Test every change on a REAL repo too (e.g. maukthik/doppel, codefork, client-desk), not only the
   fixtures. Most bugs so far were found that way: side folders swamping the scan, dev deps counted as
   stack, README results cut off, root-level test files and legacy/ read as main code, schema.prisma

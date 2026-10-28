@@ -311,6 +311,9 @@ class FakeAPI(BaseHTTPRequestHandler):
         if self.path.startswith("/busy-once") and FakeAPI.busy_once:
             FakeAPI.busy_once = False
             return self.reply(429, b'{"error": "slow down"}', "application/json")
+        if self.path == "/missing/api/chat":
+            return self.reply(404, b'{"error": "model not found, try pulling it first"}',
+                              "application/json")
         if self.path.endswith("/v1/chat/completions"):
             reply = {"choices": [{"message": {"content": "openai ok"}}]}
         elif self.path == "/api/chat":
@@ -881,3 +884,15 @@ def test_non_ascii_file_names(tmp_path):
     from proof.scan import list_files
     repo = make_repo(tmp_path, "intl", {"résumé.py": "x = 1\n", "main.py": "import json\n"})
     assert {f.name for f in list_files(repo)} == {"résumé.py", "main.py"}
+
+
+def test_thinking_is_removed():
+    reply = "<think>\nThe user wants a pitch. # Not a title\n</think>\n\nYour API is slow."
+    assert llm.strip_wrapper(reply) == "Your API is slow."
+    assert llm.strip_wrapper("planning...\n</think>\n# Title\ntext") == "# Title\ntext"
+
+
+def test_ollama_missing_model(fake_api, monkeypatch):
+    monkeypatch.setenv("OLLAMA_URL", fake_api + "/missing")
+    with pytest.raises(SystemExit, match="ollama list"):
+        llm.ask_llm("hello", "ollama", "qwen2.5-coder:7b")
